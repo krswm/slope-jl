@@ -179,7 +179,6 @@ class MyGPT2:
             print([z.shape for z in y.split(self._config["n_embd"], dim=1)])
             """
 
-            '''
             # Here, y [len_ids x 3n_embd] looks like
             #
             # (q11 ... q1N) ... (qH1 ... qHN) (k11 ... k1N) ... (kH1 ... kHN) (v11 ... v1N) ... (vH1 ... vHN)
@@ -188,10 +187,10 @@ class MyGPT2:
 
             # q, k, v = y.split(self._config["n_embd"], dim=1)
             q, k, v = y.chunk(3, dim=1)
-            if DEBUG_PRINT:
-                tprint("q", q)
-                tprint("k", k)
-                tprint("v", v)
+            if i == 0:
+                tprint2("q", q)
+                tprint2("k", k)
+                tprint2("v", v)
 
             # Here, q has (q11 ... q1N) ... (qH1 ... qHN) etc
 
@@ -216,8 +215,8 @@ class MyGPT2:
             ]
 
             # Now we have heads=[Attention1, Attention2, ..., AttentionH]
-            '''
             
+            '''
             N = self._config["n_embd"] // self._config["n_head"]
             heads = [
             	self._attention(
@@ -229,6 +228,7 @@ class MyGPT2:
             	    tprint=(j == 0 and i == 0),
             	) for j in range(self._config["n_head"])
             ]
+            '''
 
             y = torch.hstack(heads)
             # tprint2("stacked", y)

@@ -27,7 +27,17 @@ using Statistics
 # disp(tensors["h.0.ln_1.weight"])
 # disp(tensors["h.0.ln_1.bias"])
 
-C = (B .- mean(B, dims=2)) ./ sqrt.(var(B, dims=2) .+ 1e-5) .* transpose(tensors["h.0.ln_1.weight"]) .+ transpose(tensors["h.0.ln_1.bias"])
-disp(C)
+C = (B .- mean(B, dims=2)) ./ sqrt.(var(B, dims=2, corrected=false) .+ 1e-5) .* transpose(tensors["h.0.ln_1.weight"]) .+ transpose(tensors["h.0.ln_1.bias"])
+# disp(C)
 
-E = C * tensors["h.0.attn.c_attn.weight"] .+ tensors["h.0.attn.c_attn.bias"]  # np/pt "@" -> jl "*", np/pt "*" -> jl ".*"
+E = C * tensors["h.0.attn.c_attn.weight"] .+ transpose(tensors["h.0.attn.c_attn.bias"])  # np/pt "@" -> jl "*", np/pt "*" -> jl ".*"
+# disp(E)
+
+n_embd = 768  # don't hardcode!
+
+q = E[:, 1:n_embd]
+k = E[:, (n_embd + 1):(2 * n_embd)]
+v = E[:, (2 * n_embd + 1):(3 * n_embd)]
+disp(q)
+disp(k)
+disp(v)
