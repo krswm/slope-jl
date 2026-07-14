@@ -139,7 +139,7 @@ class MyGPT2:
             print(f"\x1b[32mInput embedding\x1b[39m")
 
         x = self._tensors["wte.weight"][ids]
-        tprint("A", x)
+        # tprint2("A", x)
 
         """
         assert(
@@ -150,7 +150,7 @@ class MyGPT2:
         """
 
         x += self._tensors["wpe.weight"][: len(ids), :]
-        # tprint("B", x)
+        # tprint2("B", x)
 
         #### Layers ####
 
@@ -163,13 +163,14 @@ class MyGPT2:
             y = self.LayerNorm(
                 x, self._tensors[f"h.{i}.ln_1.weight"], self._tensors[f"h.{i}.ln_1.bias"]
             )
-            tprint("C", y)
+            # tprint2("C", y)
 
             y @= self._tensors[f"h.{i}.attn.c_attn.weight"]
             tprint("D", y)
 
             y += self._tensors[f"h.{i}.attn.c_attn.bias"]
-            tprint("E", y)
+            if i == 0:
+                tprint2("E", y)
 
             """
             print(type(y.split(3)))
