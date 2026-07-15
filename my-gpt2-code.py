@@ -187,10 +187,9 @@ class MyGPT2:
 
             # q, k, v = y.split(self._config["n_embd"], dim=1)
             q, k, v = y.chunk(3, dim=1)
-            if i == 0:
-                tprint2("q", q)
-                tprint2("k", k)
-                tprint2("v", v)
+            # tprint2("q", q)
+            # tprint2("k", k)
+            # tprint2("v", v)
 
             # Here, q has (q11 ... q1N) ... (qH1 ... qHN) etc
 
@@ -202,17 +201,20 @@ class MyGPT2:
             q_heads = q.chunk(self._config["n_head"], dim=1)
             k_heads = k.chunk(self._config["n_head"], dim=1)
             v_heads = v.chunk(self._config["n_head"], dim=1)
-            if DEBUG_PRINT:
-                print("q_heads", len(q_heads))
-                print("k_heads", len(k_heads))
-                print("v_heads", len(v_heads))
+            """
+            if i == 0:
+                print("v_heads", v_heads[5])
+            """
 
             # Here, q_heads has [(q11 ... q1N), ..., (qH1 ... qHN)]etc
 
             heads = [
-                self._attention(q_, k_, v_, len(ids))
+                self._attention(q_, k_, v_, len(ids), tprint=i==0)
                 for q_, k_, v_ in zip(q_heads, k_heads, v_heads)
             ]
+
+            if i==0:
+                tprint2("heads[7]", heads[7])
 
             # Now we have heads=[Attention1, Attention2, ..., AttentionH]
             
@@ -231,7 +233,8 @@ class MyGPT2:
             '''
 
             y = torch.hstack(heads)
-            # tprint2("stacked", y)
+            if i == 0:
+                tprint2("stacked", y)
 
             y @= self._tensors[f"h.{i}.attn.c_proj.weight"]
             # tprint2("L", y)
@@ -308,7 +311,10 @@ class MyGPT2:
         # y = y.softmax(1)
         # softmax with the max trick
         e = (y - torch.amax(y, -1, keepdims=True)).exp()
-        # tprint("e", e)
+        '''
+        if tprint:
+            tprint2("e", e)
+        '''
         
         y = e / e.sum(-1, keepdims=True)
 
