@@ -69,4 +69,11 @@ heads =[
 # show(heads[8])
 
 stacked = cat(heads..., dims=2)
-disp(stacked)
+
+M = stacked * tensors["h.0.attn.c_proj.weight"] .+ transpose(tensors["h.0.attn.c_proj.bias"])
+N = B + M
+
+O = (N .- mean(N, dims=2)) ./ sqrt.(var(N, dims=2, corrected=false) .+ 1e-5) .* transpose(tensors["h.0.ln_2.weight"]) .+ transpose(tensors["h.0.ln_2.bias"])
+
+Q = O * tensors["h.1.mlp.c_fc.weight"] .+ transpose(tensors["h.1.mlp.c_fc.bias"])
+disp(Q)

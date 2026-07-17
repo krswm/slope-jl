@@ -169,8 +169,7 @@ class MyGPT2:
             tprint("D", y)
 
             y += self._tensors[f"h.{i}.attn.c_attn.bias"]
-            if i == 0:
-                tprint2("E", y)
+            # tprint2("E", y)
 
             """
             print(type(y.split(3)))
@@ -213,8 +212,7 @@ class MyGPT2:
                 for q_, k_, v_ in zip(q_heads, k_heads, v_heads)
             ]
 
-            if i==0:
-                tprint2("heads[7]", heads[7])
+            # tprint2("heads[7]", heads[7])
 
             # Now we have heads=[Attention1, Attention2, ..., AttentionH]
             
@@ -233,30 +231,25 @@ class MyGPT2:
             '''
 
             y = torch.hstack(heads)
-            if i == 0:
-                tprint2("stacked", y)
 
             y @= self._tensors[f"h.{i}.attn.c_proj.weight"]
             # tprint2("L", y)
 
             y += self._tensors[f"h.{i}.attn.c_proj.bias"]
-            # tprint2("M", y)
 
             x += y
-            # tprint2("N", x)
 
             #### Feed Forward ####
 
             y = self.LayerNorm(
                 x, self._tensors[f"h.{i}.ln_2.weight"], self._tensors[f"h.{i}.ln_2.bias"]
             )
-            # tprint2("O", y)
 
             y @= self._tensors[f"h.{i}.mlp.c_fc.weight"]
-            # tprint2("P", y)
 
             y += self._tensors[f"h.{i}.mlp.c_fc.bias"]
-            # tprint2("Q", y)
+            if i == 0:
+                tprint2("Q", y)
 
             """
             gelu = torch.nn.GELU()
