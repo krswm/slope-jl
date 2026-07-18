@@ -25,62 +25,54 @@ B = tensors["wte.weight"][ids .+ 1, :] .+ tensors["wpe.weight"][1:length(ids), :
 
 using Statistics
 
-# disp(tensors["h.0.ln_1.weight"])
-# disp(tensors["h.0.ln_1.bias"])
+for i_layer in 0:11  # Do not hardcode this
+    global B
+    C = (B .- mean(B, dims=2)) ./ sqrt.(var(B, dims=2, corrected=false) .+ 1e-5) .* transpose(tensors["h.$i_layer.ln_1.weight"]) .+ transpose(tensors["h.$i_layer.ln_1.bias"])
 
-C = (B .- mean(B, dims=2)) ./ sqrt.(var(B, dims=2, corrected=false) .+ 1e-5) .* transpose(tensors["h.0.ln_1.weight"]) .+ transpose(tensors["h.0.ln_1.bias"])
-# disp(C)
+    E = C * tensors["h.$i_layer.attn.c_attn.weight"] .+ transpose(tensors["h.$i_layer.attn.c_attn.bias"])  # np/pt "@" -> jl "*", np/pt "*" -> jl ".*"
 
-E = C * tensors["h.0.attn.c_attn.weight"] .+ transpose(tensors["h.0.attn.c_attn.bias"])  # np/pt "@" -> jl "*", np/pt "*" -> jl ".*"
-# disp(E)
+    n_embd = 768  # don't hardcode!
 
-n_embd = 768  # don't hardcode!
+    q, k, v = [E[:, (n_embd * (i - 1) + 1):(n_embd * i)] for i in 1:3]
 
-q, k, v = [E[:, (n_embd * (i - 1) + 1):(n_embd * i)] for i in 1:3]
-# disp(q)
-# disp(k)
-# disp(v)
+    n_head = 12  # don't hardcode!
+    N = n_embd ÷ n_head
 
-n_head = 12  # don't hardcode!
-N = n_embd ÷ n_head
+    q_heads = [q[:, (N * (i - 1) + 1):(N * i)] for i in 1:n_head]
+    k_heads = [k[:, (N * (i - 1) + 1):(N * i)] for i in 1:n_head]
+    v_heads = [v[:, (N * (i - 1) + 1):(N * i)] for i in 1:n_head]
 
-q_heads = [q[:, (N * (i - 1) + 1):(N * i)] for i in 1:n_head]
-k_heads = [k[:, (N * (i - 1) + 1):(N * i)] for i in 1:n_head]
-v_heads = [v[:, (N * (i - 1) + 1):(N * i)] for i in 1:n_head]
+    using LinearAlgebra
 
-# disp(v_heads[6])
+    function attention(q, k, v)
+        y = (tril(q * transpose(k) ./ sqrt(size(q, 2))) + triu(ones(size(q, 1), size(q, 1)) * -1e12, 1))
 
-using LinearAlgebra
+        e = exp.(y .- reshape([maximum(row) for row in eachrow(y)], (size(y, 1), 1)))
 
-function attention(q, k, v)
-    y = (tril(q * transpose(k) ./ sqrt(size(q, 2))) + triu(ones(size(q, 1), size(q, 1)) * -1e12, 1))
+        return (e ./ reshape([sum(row) for row in eachrow(e)], (size(e, 1), 1))) * v
+    end
 
-    e = exp.(y .- reshape([maximum(row) for row in eachrow(y)], (size(y, 1), 1)))
-    # disp(e)
 
-    return (e ./ reshape([sum(row) for row in eachrow(e)], (size(e, 1), 1))) * v
+    heads =[
+        attention(q, k, v) for (q, k, v) in zip(q_heads, k_heads, v_heads)
+    ]
+
+    stacked = cat(heads..., dims=2)
+
+    M = stacked * tensors["h.$i_layer.attn.c_proj.weight"] .+ transpose(tensors["h.$i_layer.attn.c_proj.bias"])
+    N = B + M
+
+    O = (N .- mean(N, dims=2)) ./ sqrt.(var(N, dims=2, corrected=false) .+ 1e-5) .* transpose(tensors["h.$i_layer.ln_2.weight"]) .+ transpose(tensors["h.$i_layer.ln_2.bias"])
+
+    Q = O * tensors["h.$i_layer.mlp.c_fc.weight"] .+ transpose(tensors["h.$i_layer.mlp.c_fc.bias"])
+
+    R = 0.5 .* Q .* (1.0 .+ tanh.(sqrt(2.0 / pi) .* (Q .+ 0.044715 .* (Q .^ 3))))
+
+    S = R * tensors["h.$i_layer.mlp.c_proj.weight"] .+ transpose(tensors["h.$i_layer.mlp.c_proj.bias"])
+
+    B = N + S
 end
 
-
-heads =[
-    attention(q, k, v) for (q, k, v) in zip(q_heads, k_heads, v_heads)
-]
-
-# show(heads[8])
-
-stacked = cat(heads..., dims=2)
-
-M = stacked * tensors["h.0.attn.c_proj.weight"] .+ transpose(tensors["h.0.attn.c_proj.bias"])
-N = B + M
-
-O = (N .- mean(N, dims=2)) ./ sqrt.(var(N, dims=2, corrected=false) .+ 1e-5) .* transpose(tensors["h.0.ln_2.weight"]) .+ transpose(tensors["h.0.ln_2.bias"])
-
-Q = O * tensors["h.0.mlp.c_fc.weight"] .+ transpose(tensors["h.0.mlp.c_fc.bias"])
-
-# gelu
-R = 0.5 .* Q .* (1.0 .+ tanh.(sqrt(2.0 / pi) .* (Q .+ 0.044715 .* (Q .^ 3))))
-
-S = R * tensors["h.0.mlp.c_proj.weight"] .+ transpose(tensors["h.0.mlp.c_proj.bias"])
-
-B = N + S
-disp(B)
+U = (B .- mean(B, dims=2)) ./ sqrt.(var(B, dims=2, corrected=false) .+ 1e-5) .* transpose(tensors["ln_f.weight"]) .+ transpose(tensors["ln_f.bias"])
+V = U * transpose(tensors["wte.weight"])
+disp(V)
