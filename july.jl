@@ -75,5 +75,12 @@ N = B + M
 
 O = (N .- mean(N, dims=2)) ./ sqrt.(var(N, dims=2, corrected=false) .+ 1e-5) .* transpose(tensors["h.0.ln_2.weight"]) .+ transpose(tensors["h.0.ln_2.bias"])
 
-Q = O * tensors["h.1.mlp.c_fc.weight"] .+ transpose(tensors["h.1.mlp.c_fc.bias"])
-disp(Q)
+Q = O * tensors["h.0.mlp.c_fc.weight"] .+ transpose(tensors["h.0.mlp.c_fc.bias"])
+
+# gelu
+R = 0.5 .* Q .* (1.0 .+ tanh.(sqrt(2.0 / pi) .* (Q .+ 0.044715 .* (Q .^ 3))))
+
+S = R * tensors["h.0.mlp.c_proj.weight"] .+ transpose(tensors["h.0.mlp.c_proj.bias"])
+
+B = N + S
+disp(B)

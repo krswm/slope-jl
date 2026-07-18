@@ -248,15 +248,12 @@ class MyGPT2:
             y @= self._tensors[f"h.{i}.mlp.c_fc.weight"]
 
             y += self._tensors[f"h.{i}.mlp.c_fc.bias"]
-            if i == 0:
-                tprint2("Q", y)
 
             """
             gelu = torch.nn.GELU()
             y = gelu(y)
             """
             y = 0.5 * y * (1.0 + ((2.0 / 3.141592)**0.5 * (y + 0.044715 * y**3)).tanh())
-            # tprint2("R", y)
 
             y @= self._tensors[f"h.{i}.mlp.c_proj.weight"]
             # tprint2("S", y)
@@ -265,7 +262,8 @@ class MyGPT2:
             # tprint2("T", y)
 
             x += y
-            # tprint2("TT", x)
+            if i == 0:
+                tprint2("B", x)
 
         #### Output embedding ####
         # tprint2("xb after decoder stack", x)
