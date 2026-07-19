@@ -101,12 +101,34 @@ elseif length(ids) > config["n_ctx"]
     exit()
 end
 
+function decode_unique_encoding(string)
+    # TODO: This function currently cannot handle an invalid UTF-8 sequence.
+    transcode(
+        String,
+        [
+            if 0x0100 <= codepoint <= 0x0120
+                UInt8(codepoint - 0x0100)
+            elseif 0x0021 <= codepoint <= 0x007E
+                UInt8(codepoint)
+            elseif 0x0121 <= codepoint <= 0x0142
+                UInt8(codepoint - 0x00A2)
+            elseif 0x00A1 <= codepoint <= 0x00AC
+                UInt8(codepoint)
+            elseif codepoint == 0x0143
+                0xAD
+            elseif 0x00AE <= codepoint <= 0x00FF
+                UInt8(codepoint)
+            end for codepoint in transcode(UInt32, string)
+        ],
+    )
+end
+
 while true
     x = transform(tensors, config, ids)
 
     # ids are 0-based. Julia is 1-based.
     next_id = argmax(x) - 1
-    printstyled(id_to_token[next_id], bold = true)
+    printstyled(decode_unique_encoding(id_to_token[next_id]), bold = true)
 
     if length(ids) == config["n_ctx"]
         popfirst!(ids)
