@@ -89,6 +89,9 @@ end
 tensors = load_safetensors("$(ARGS[1])/model.safetensors")
 config = JSON.parsefile("$(ARGS[1])/config.json")
 
+token_to_id = JSON.parsefile("$(ARGS[1])/vocab.json")
+id_to_token = Dict(id => token for (token, id) in token_to_id)
+
 ids = [parse(Int64, arg) for arg in ARGS[2:end]]
 if length(ids) == 0
     println("Your prompt should not be empty.")
@@ -103,7 +106,7 @@ while true
 
     # ids are 0-based. Julia is 1-based.
     next_id = argmax(x) - 1
-    println(next_id)
+    printstyled(id_to_token[next_id], bold = true)
 
     if length(ids) == config["n_ctx"]
         popfirst!(ids)
