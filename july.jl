@@ -1,23 +1,24 @@
 using LinearAlgebra
 using Statistics
 
+using JSON
 using SafeTensors
 
 tensors = load_safetensors("$(ARGS[1])/model.safetensors")
+config = JSON.parsefile("$(ARGS[1])/config.json")
 ids = [parse(Int64, arg) for arg in ARGS[2:end]]
 
-# TODO: Do not hardcode them.
-n_embd = 768
-n_head = 12
-n_layer = 12
+size_of_head = config["n_embd"] ÷ config["n_head"]
 
-size_of_head = n_embd ÷ n_head
+#### Embedding ####
 
 # ids are 0-based. Julia is 1-based.
 x = tensors["wte.weight"][ids .+ 1, :] .+ tensors["wpe.weight"][1:length(ids), :]
 
-for i_layer = 0:(n_layer-1)
+for i_layer = 0:(config["n_layer"]-1)
     global x
+
+    #### Masked Multi-Head Attention ####
 
     y =
         (x .- mean(x, dims = 2)) ./ sqrt.(var(x, corrected = false, dims = 2) .+ 1.0f-5) .*
@@ -28,11 +29,11 @@ for i_layer = 0:(n_layer-1)
         y * tensors["h.$i_layer.attn.c_attn.weight"] .+
         transpose(tensors["h.$i_layer.attn.c_attn.bias"])
 
-    q, k, v = [y[:, (n_embd*(i-1)+1):(n_embd*i)] for i = 1:3]
+    q, k, v = [y[:, (config["n_embd"]*(i-1)+1):(config["n_embd"]*i)] for i = 1:3]
 
-    q_heads = [q[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:n_head]
-    k_heads = [k[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:n_head]
-    v_heads = [v[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:n_head]
+    q_heads = [q[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
+    k_heads = [k[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
+    v_heads = [v[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
 
     y = cat(
         [
@@ -58,6 +59,8 @@ for i_layer = 0:(n_layer-1)
 
     x += y
 
+    #### Feed Forward ####
+
     y =
         (x .- mean(x, dims = 2)) ./ sqrt.(var(x, corrected = false, dims = 2) .+ 1.0f-5) .*
         transpose(tensors["h.$i_layer.ln_2.weight"]) .+
@@ -75,6 +78,8 @@ for i_layer = 0:(n_layer-1)
 
     x += y
 end
+
+#### Projection ####
 
 x =
     (x .- mean(x, dims = 2)) ./ sqrt.(var(x, corrected = false, dims = 2) .+ 1.0f-5) .*
