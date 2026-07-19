@@ -16,21 +16,31 @@ n_layer = 12
 size_of_head = n_embd ÷ n_head
 
 function attention(q, k, v)
-    x = (
-        tril(q * transpose(k) ./ sqrt(size(q, 2))) +
-        triu(ones(size(q, 1), size(q, 1)) * -1e12, 1)
-    )
+    println("A $(summary(q)) $(summary(k)) $(summary(v))")
+    x = q * transpose(k)
+    println("E $(summary(x))")
+    x = x ./ sqrt(Float32(size(q, 2)))
+    println("D $(summary(x))")
+    x = tril(x)
+    println("B $(summary(x))")
+    x += triu(fill(-Inf32, (size(q, 1), size(q, 1))), 1)
+    println("C $(summary(x))")
+
+    # x = (
+    #     tril(q * transpose(k) ./ sqrt(size(q, 2))) +
+    #     triu(fill(-Inf32, (size(q, 1), size(q, 1))), 1)
+    # )
 
     x = exp.(x .- reshape([maximum(row) for row in eachrow(x)], (size(x, 1), 1)))
 
-    return (x ./ reshape([sum(row) for row in eachrow(x)], (size(x, 1), 1))) * v
+    (x ./ reshape([sum(row) for row in eachrow(x)], (size(x, 1), 1))) * v
 end
 
 for i_layer = 0:(n_layer-1)
     global x
 
     y =
-        (x .- mean(x, dims = 2)) ./ sqrt.(var(x, dims = 2, corrected = false) .+ 1e-5) .*
+        (x .- mean(x, dims = 2)) ./ sqrt.(var(x, dims = 2, corrected = false) .+ 1.0f-5) .*
         transpose(tensors["h.$i_layer.ln_1.weight"]) .+
         transpose(tensors["h.$i_layer.ln_1.bias"])
 
@@ -53,24 +63,24 @@ for i_layer = 0:(n_layer-1)
         y * tensors["h.$i_layer.attn.c_proj.weight"] .+
         transpose(tensors["h.$i_layer.attn.c_proj.bias"])
 
-    x = x + y
+    x += y
 
-    O =
+    y =
         (x .- mean(x, dims = 2)) ./ sqrt.(var(x, dims = 2, corrected = false) .+ 1e-5) .*
         transpose(tensors["h.$i_layer.ln_2.weight"]) .+
         transpose(tensors["h.$i_layer.ln_2.bias"])
 
-    Q =
-        O * tensors["h.$i_layer.mlp.c_fc.weight"] .+
+    y =
+        y * tensors["h.$i_layer.mlp.c_fc.weight"] .+
         transpose(tensors["h.$i_layer.mlp.c_fc.bias"])
 
-    R = 0.5 .* Q .* (1.0 .+ tanh.(sqrt(2.0 / pi) .* (Q .+ 0.044715 .* (Q .^ 3))))
+    y = 0.5 .* y .* (1.0 .+ tanh.(sqrt(2.0 / pi) .* (y .+ 0.044715 .* (y .^ 3))))
 
-    S =
-        R * tensors["h.$i_layer.mlp.c_proj.weight"] .+
+    y =
+        y * tensors["h.$i_layer.mlp.c_proj.weight"] .+
         transpose(tensors["h.$i_layer.mlp.c_proj.bias"])
 
-    x = x + S
+    x += y
 end
 
 U =
