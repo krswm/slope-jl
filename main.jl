@@ -4,6 +4,70 @@ using Statistics
 using JSON
 using SafeTensors
 
+#### Tokenizer ####
+
+# Tokenize an input with the BPE algorithm.
+function tokenize(token_to_id, ranks, input)
+    raw_tokens = String[]
+    for (i_line, line) ∈ enumerate(split(input, "\n"))
+        if i_line ≥ 2
+            push!(raw_tokens, "\n")
+        end
+
+        for (i_word, word) in enumerate(split(line, " "))
+            if i_word == 1 && word ≠ ""
+                push!(raw_tokens, word)
+            elseif i_word ≥ 2
+                push!(raw_tokens, " $word")
+            end
+        end
+    end
+
+    tokens = [encode_unique_encoding(raw_token) for raw_token ∈ raw_tokens]
+
+    # Token IDs
+    ids = []
+    for token ∈ tokens
+        if haskey(token_to_id, token)
+            push!(ids, token_to_id[token])
+        else
+            #### Merge ####
+
+            symbols = string.(collect(token))
+
+            while length(symbols) ≥ 2
+                pairs = [
+                    (token0, token1) for (token0, token1) ∈
+                    zip(symbols[begin:(end-1)], symbols[(begin+1):end])
+                ]
+
+                best_rank = typemax(Int)
+                best_i_pair = 0
+                for (i_pair, pair) ∈ enumerate(pairs)
+                    if haskey(ranks, pair) && ranks[pair] < best_rank
+                        best_rank = ranks[pair]
+                        best_i_pair = i_pair
+                    end
+                end
+                if best_i_pair == 0
+                    break
+                end
+
+                symbols[best_i_pair] *= symbols[best_i_pair+1]
+                deleteat!(symbols, best_i_pair + 1)
+            end
+
+            for symbol in symbols
+                push!(ids, token_to_id[symbol])
+            end
+        end
+    end
+    ids
+end
+
+# GPT-2 has a unique encoding.
+# e.g.: 'Ġ' (U+0120) → 0x20
+
 function encode_unique_encoding(text)
     encoded = [
         if byte ∈ 0x00:0x20
@@ -23,70 +87,69 @@ function encode_unique_encoding(text)
     transcode(String, encoded)
 end
 
-function load_ranks()
-    ranks = Dict()
-    rank = 0
-    for line ∈ readlines("$(ARGS[1])/merges.txt")
-        # Skip a comment line.
-        if startswith(line, "#") continue end
+function decode_unique_encoding!(buffer, encoded)
+    decoded = [
+        if codepoint ∈ 0x0100:0x0120
+            UInt8(codepoint - 0x0100)
+        elseif codepoint ∈ 0x0021:0x007E
+            UInt8(codepoint)
+        elseif codepoint ∈ 0x0121:0x0142
+            UInt8(codepoint - 0x00A2)
+        elseif codepoint ∈ 0x00A1:0x00AC
+            UInt8(codepoint)
+        elseif codepoint == 0x0143
+            0xAD
+        elseif codepoint ∈ 0x00AE:0x00FF
+            UInt8(codepoint)
+        end for codepoint ∈ transcode(UInt32, encoded)
+    ]
 
-        token0, token1 = split(line, " ")
-        ranks[(token0, token1)] = rank
-        rank += 1
+    decoded = vcat(buffer, decoded)
+
+    # A token may contain only a part of UTF-8 sequence.
+    # Decode it incrementally.
+
+    # Unfinished valid UTF-8 sequences:
+    #
+    # Case A1: 110xxxxx
+    #
+    # Case B1: 1110xxxx
+    # Case B2: 1110xxxx 10xxxxxx
+    #
+    # Case C1: 11110xxx
+    # Case C2: 11110xxx 10xxxxxx
+    # Case C3: 11110xxx 10xxxxxx 10xxxxxx
+
+    if length(decoded) ≥ 3 &&
+       decoded[end-2] ∈ 0xC0:0xDF &&
+       decoded[end-1] ∈ 0x80:0xBF &&
+       decoded[end] ∈ 0x80:0xBF
+        # Case C3
+        decoded = decoded[begin:(end-2)]
+        buffer = decoded[(end-2):end]
+    elseif length(decoded) ≥ 2 && decoded[end-1] ∈ 0xC0:0xEF && decoded[end] ∈ 0x80:0xBF
+        # Case B2 and Case C2
+        decoded = decoded[begin:(end-1)]
+        buffer = decoded[(end-1):end]
+    elseif length(decoded) ≥ 1 && decoded[end] ∈ 0xC0:0xF7
+        # Case A1, Case B1, and Case C1
+        decoded = decoded[begin:end]
+        buffer = decoded[end:end]
+    else
+        # No unfinished sequence at the end
+        buffer = UInt8[]
     end
-    ranks
+
+    decoded = transcode(String, decoded)
+    string(
+        (
+            (valid ? char : '�') for
+            (char, valid) ∈ zip(decoded, isvalid.(collect(decoded)))
+        )...,
+    )
 end
 
-function tokenize(token_to_id, ranks, input)
-    tokens = String[]
-    for (i_line, line) ∈ enumerate(split(input, "\n"))
-        if i_line ≥ 2 push!(tokens, "\n") end
-
-        for (i_word, word) in enumerate(split(line, " "))
-            if i_word == 1 && word ≠ ""
-                push!(tokens, word)
-            elseif i_word ≥ 2
-                push!(tokens, " $word")
-            end
-        end
-    end
-
-    tokens = [encode_unique_encoding(token) for token ∈ tokens]
-
-    # Token IDs
-    ids = []
-    for token ∈ tokens
-        if haskey(token_to_id, token)
-            push!(ids, token_to_id[token])
-        else
-            # Merge
-
-            symbols = string.(collect(token))
-
-            while length(symbols) ≥ 2
-                pairs = [(token0, token1) for (token0, token1) ∈ zip(symbols[begin:end-1], symbols[begin+1:end])]
-
-                best_rank = typemax(Int32)
-                best_i_pair = typemax(Int32)
-                for (i_pair, pair) ∈ enumerate(pairs)
-                    if haskey(ranks, pair) && ranks[pair] < best_rank
-                        best_rank = ranks[pair]
-                        best_i_pair = i_pair
-                    end
-                end
-                if best_i_pair == typemax(Int32) break end
-
-                symbols[best_i_pair] = symbols[best_i_pair] * symbols[best_i_pair + 1]
-                deleteat!(symbols, best_i_pair + 1)
-            end
-
-            for symbol in symbols
-                push!(ids, token_to_id[symbol])
-            end
-        end
-    end
-    ids
-end
+#### Transformer ####
 
 # The transformer for the GPT-2 architecture.
 function transform(tensors, config, ids)
@@ -166,76 +229,35 @@ function transform(tensors, config, ids)
     tensors["wte.weight"] * x
 end
 
-function decode_unique_encoding!(buffer, encoded)
-    decoded = [
-        if codepoint ∈ 0x0100:0x0120
-            UInt8(codepoint - 0x0100)
-        elseif codepoint ∈ 0x0021:0x007E
-            UInt8(codepoint)
-        elseif codepoint ∈ 0x0121:0x0142
-            UInt8(codepoint - 0x00A2)
-        elseif codepoint ∈ 0x00A1:0x00AC
-            UInt8(codepoint)
-        elseif codepoint == 0x0143
-            0xAD
-        elseif codepoint ∈ 0x00AE:0x00FF
-            UInt8(codepoint)
-        end for codepoint ∈ transcode(UInt32, encoded)
-    ]
-
-    decoded = vcat(buffer, decoded)
-
-    # A token may contain only a part of UTF-8 sequence.
-    # Decode it incrementally.
-
-    # Unfinished valid UTF-8 sequences:
-    #
-    # Case A1: 110xxxxx
-    #
-    # Case B1: 1110xxxx
-    # Case B2: 1110xxxx 10xxxxxx
-    #
-    # Case C1: 11110xxx
-    # Case C2: 11110xxx 10xxxxxx
-    # Case C3: 11110xxx 10xxxxxx 10xxxxxx
-
-    if length(decoded) ≥ 3 &&
-       decoded[end-2] ∈ 0xC0:0xDF &&
-       decoded[end-1] ∈ 0x80:0xBF &&
-       decoded[end] ∈ 0x80:0xBF
-        # Case C3
-        decoded = decoded[begin:(end-2)]
-        buffer = decoded[(end-2):end]
-    elseif length(decoded) ≥ 2 && decoded[end-1] ∈ 0xC0:0xEF && decoded[end] ∈ 0x80:0xBF
-        # Case B2 and Case C2
-        decoded = decoded[begin:(end-1)]
-        buffer = decoded[(end-1):end]
-    elseif length(decoded) ≥ 1 && decoded[end] ∈ 0xC0:0xF7
-        # Case A1, Case B1, and Case C1
-        decoded = decoded[begin:end]
-        buffer = decoded[end:end]
-    else
-        # No unfinished sequence at the end
-        buffer = UInt8[]
-    end
-
-    decoded = transcode(String, decoded)
-    string(
-        (
-            (valid ? char : '�') for
-            (char, valid) ∈ zip(decoded, isvalid.(collect(decoded)))
-        )...,
-    )
-end
+#### Main ####
 
 function main()
-    tensors = load_safetensors("$(ARGS[1])/model.safetensors")
+    # TODO: Usage message
+
+    #### Loading Files ####
+
     config = JSON.parsefile("$(ARGS[1])/config.json")
 
-    ranks = load_ranks()
+    ranks = begin
+        ranks = Dict{Tuple{String,String},Int}()
+        rank = 0
+        for line ∈ readlines("$(ARGS[1])/merges.txt")
+            # Skip a comment line.
+            if startswith(line, "#")
+                continue
+            end
+
+            token0, token1 = split(line, " ")
+            ranks[(token0, token1)] = rank
+            rank += 1
+        end
+        ranks
+    end
 
     token_to_id = JSON.parsefile("$(ARGS[1])/vocab.json")
     id_to_token = Dict(id => token for (token, id) ∈ token_to_id)
+
+    #### Tokenization ####
 
     ids = tokenize(token_to_id, ranks, ARGS[2])
     if length(ids) == 0
@@ -245,6 +267,12 @@ function main()
         println("Your prompt exceeds the context length. Try shorter prompt.")
         exit()
     end
+
+    #### Loading Tensors ####
+
+    tensors = load_safetensors("$(ARGS[1])/model.safetensors")
+
+    #### Inference ####
 
     printstyled(ARGS[2], bold = true, color = :light_black)
 
