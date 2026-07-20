@@ -17,6 +17,19 @@ function encode_unique_encoding(text)
     transcode(String, encoded)
 end
 
-print(encode_unique_encoding("a"))
-print(encode_unique_encoding(" "))
-print(encode_unique_encoding("あ"))
+function load_ranks()
+    ranks = Dict()
+    rank = 0
+    for line ∈ readlines(ARGS[1])
+        # Skip a comment line.
+        if startswith(line, "#") continue end
+
+        token0, token1 = split(line, " ")
+        ranks[(token0, token1)] = rank
+        rank += 1
+    end
+    ranks
+end
+
+ranks = load_ranks()
+print(ranks)
