@@ -33,7 +33,7 @@ function transform(tensors, config, ids)
         v_heads = [v[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
 
         y = cat(
-            [
+            (
                 begin
                     z = (
                         tril(q * transpose(k) ./ sqrt(Float32(size(q, 2)))) +
@@ -46,7 +46,7 @@ function transform(tensors, config, ids)
 
                     (z ./ reshape([sum(row) for row in eachrow(z)], (size(z, 1), 1))) * v
                 end for (q, k, v) in zip(q_heads, k_heads, v_heads)
-            ]...,
+            )...,
             dims = 2,
         )
 
@@ -103,7 +103,7 @@ end
 
 function decode_unique_encoding(string)
     # TODO: This function currently cannot handle an invalid UTF-8 sequence.
-    transcode(
+    decoded = transcode(
         String,
         [
             if 0x0100 <= codepoint <= 0x0120
@@ -120,6 +120,21 @@ function decode_unique_encoding(string)
                 UInt8(codepoint)
             end for codepoint in transcode(UInt32, string)
         ],
+    )
+
+    # UTF-8 sequences that is valid if they are at the end of the string
+    # and the string is decoded incrementally but not valid itself
+    # 110xxxxx                   0xC0..=0xDF
+    # 1110xxxx                   0xE0..=0xEF
+    # 1110xxxx 10xxxxxx          0xE0..=0xEF 0x80..=0xBF
+    # 11110xxx                   0xF0..=0xF7
+    # 11110xxx 10xxxxxx          0xF0..=0xF7 0x80..=0xBF
+    # 11110xxx 10xxxxxx 10xxxxxx 0xF0..=0xF7 0x80..=0xBF 0x80..=0xBF
+    # I can regex it.
+
+    match(
+        decoded,
+        r"([\x00-\xff]*?)([\xc0-\xdf]|[\xe0-\xef][\x80-\xbf]?|[\xf0-\xf7][\x80-\xbf]{,2})",
     )
 end
 
