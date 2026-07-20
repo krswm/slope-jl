@@ -87,8 +87,8 @@ function encode_unique_encoding(text)
     transcode(String, encoded)
 end
 
-function decode_unique_encoding!(buffer, encoded)
-    decoded = [
+function decode_unique_encoding(buffer, encoded)
+    bytes = [
         if codepoint ∈ 0x0100:0x0120
             UInt8(codepoint - 0x0100)
         elseif codepoint ∈ 0x0021:0x007E
@@ -104,7 +104,7 @@ function decode_unique_encoding!(buffer, encoded)
         end for codepoint ∈ transcode(UInt32, encoded)
     ]
 
-    decoded = vcat(buffer, decoded)
+    bytes = vcat(buffer, bytes)
 
     # A token may contain only a part of UTF-8 sequence.
     # Decode it incrementally.
@@ -120,33 +120,36 @@ function decode_unique_encoding!(buffer, encoded)
     # Case C2: 11110xxx 10xxxxxx
     # Case C3: 11110xxx 10xxxxxx 10xxxxxx
 
-    if length(decoded) ≥ 3 &&
-       decoded[end-2] ∈ 0xC0:0xDF &&
-       decoded[end-1] ∈ 0x80:0xBF &&
-       decoded[end] ∈ 0x80:0xBF
+    if length(bytes) ≥ 3 &&
+       bytes[end-2] ∈ 0xC0:0xDF &&
+       bytes[end-1] ∈ 0x80:0xBF &&
+       bytes[end] ∈ 0x80:0xBF
         # Case C3
-        decoded = decoded[begin:(end-2)]
-        buffer = decoded[(end-2):end]
-    elseif length(decoded) ≥ 2 && decoded[end-1] ∈ 0xC0:0xEF && decoded[end] ∈ 0x80:0xBF
+        decoded = bytes[begin:(end-3)]
+        buffer = bytes[(end-2):end]
+    elseif length(bytes) ≥ 2 && bytes[end-1] ∈ 0xC0:0xEF && bytes[end] ∈ 0x80:0xBF
         # Case B2 and Case C2
-        decoded = decoded[begin:(end-1)]
-        buffer = decoded[(end-1):end]
-    elseif length(decoded) ≥ 1 && decoded[end] ∈ 0xC0:0xF7
+        decoded = bytes[begin:(end-2)]
+        buffer = bytes[(end-1):end]
+    elseif length(bytes) ≥ 1 && bytes[end] ∈ 0xC0:0xF7
         # Case A1, Case B1, and Case C1
-        decoded = decoded[begin:end]
-        buffer = decoded[end:end]
+        decoded = bytes[begin:(end-1)]
+        buffer = bytes[end:end]
     else
         # No unfinished sequence at the end
+        decoded = bytes
         buffer = UInt8[]
     end
 
     decoded = transcode(String, decoded)
-    string(
+    decoded = string(
         (
             (valid ? char : '�') for
             (char, valid) ∈ zip(decoded, isvalid.(collect(decoded)))
         )...,
     )
+
+    (buffer, decoded)
 end
 
 #### Transformer ####
@@ -289,7 +292,7 @@ function main()
 
         # ids are 0-based. Julia is 1-based.
         next_id = argmax(x) - 1
-        decoded = decode_unique_encoding!(buffer, id_to_token[next_id])
+        (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[next_id])
         printstyled(decoded, bold = true)
 
         if length(ids) == config["n_ctx"]
