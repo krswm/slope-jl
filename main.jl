@@ -4,6 +4,7 @@ using Statistics
 using JSON
 using SafeTensors
 
+# The transformer for the GPT-2 architecture.
 function transform(tensors, config, ids)
     #### Embedding ####
 
@@ -81,22 +82,7 @@ function transform(tensors, config, ids)
     tensors["wte.weight"] * x
 end
 
-tensors = load_safetensors("$(ARGS[1])/model.safetensors")
-config = JSON.parsefile("$(ARGS[1])/config.json")
-
-token_to_id = JSON.parsefile("$(ARGS[1])/vocab.json")
-id_to_token = Dict(id => token for (token, id) ∈ token_to_id)
-
-ids = [parse(Int64, arg) for arg ∈ ARGS[2:end]]
-if length(ids) == 0
-    println("Your prompt should not be empty.")
-    exit()
-elseif length(ids) > config["n_ctx"]
-    println("Your prompt exceeds the context length. Try shorter prompt.")
-    exit()
-end
-
-function decode_unique_encoding!(str, buffer)
+function decode_unique_encoding!(buffer, encoded)
     decoded = [
         if codepoint ∈ 0x0100:0x0120
             UInt8(codepoint - 0x0100)
@@ -110,7 +96,7 @@ function decode_unique_encoding!(str, buffer)
             0xAD
         elseif codepoint ∈ 0x00AE:0x00FF
             UInt8(codepoint)
-        end for codepoint ∈ transcode(UInt32, str)
+        end for codepoint ∈ transcode(UInt32, encoded)
     ]
 
     decoded = vcat(buffer, decoded)
@@ -129,47 +115,65 @@ function decode_unique_encoding!(str, buffer)
     # Case C2: 11110xxx 10xxxxxx
     # Case C3: 11110xxx 10xxxxxx 10xxxxxx
 
-    # Case C3
     if length(decoded) ≥ 3 &&
        decoded[end-2] ∈ 0xC0:0xDF &&
        decoded[end-1] ∈ 0x80:0xBF &&
        decoded[end] ∈ 0x80:0xBF
-        a = decoded[begin:(end-2)]
-        b = decoded[(end-2):end]
-
-        # Case B2 and Case C2
+        # Case C3
+        decoded = decoded[begin:(end-2)]
+        buffer = decoded[(end-2):end]
     elseif length(decoded) ≥ 2 && decoded[end-1] ∈ 0xC0:0xEF && decoded[end] ∈ 0x80:0xBF
-        a = decoded[begin:(end-1)]
-        b = decoded[(end-1):end]
-
-        # Case A1, Case B1, and Case C1
+        # Case B2 and Case C2
+        decoded = decoded[begin:(end-1)]
+        buffer = decoded[(end-1):end]
     elseif length(decoded) ≥ 1 && decoded[end] ∈ 0xC0:0xF7
-        a = decoded[begin:end]
-        b = decoded[end:end]
-
-        # No unfinished sequence at the end
+        # Case A1, Case B1, and Case C1
+        decoded = decoded[begin:end]
+        buffer = decoded[end:end]
     else
-        a = decoded
-        b = UInt8[]
-
+        # No unfinished sequence at the end
+        buffer = UInt8[]
     end
 
-    c = transcode(String, a)
-    d = string(((valid ? s : '�') for (s, valid) ∈ zip(c, isvalid.(collect(c))))...)
-
-    d
+    decoded = transcode(String, decoded)
+    string(
+        (
+            (valid ? char : '�') for
+            (char, valid) ∈ zip(decoded, isvalid.(collect(decoded)))
+        )...,
+    )
 end
 
-buffer = UInt8[]
-while true
-    x = transform(tensors, config, ids)
+function main()
+    tensors = load_safetensors("$(ARGS[1])/model.safetensors")
+    config = JSON.parsefile("$(ARGS[1])/config.json")
 
-    # ids are 0-based. Julia is 1-based.
-    next_id = argmax(x) - 1
-    printstyled(decode_unique_encoding!(id_to_token[next_id], buffer), bold = true)
+    token_to_id = JSON.parsefile("$(ARGS[1])/vocab.json")
+    id_to_token = Dict(id => token for (token, id) ∈ token_to_id)
 
-    if length(ids) == config["n_ctx"]
-        popfirst!(ids)
+    ids = [parse(Int64, arg) for arg ∈ ARGS[2:end]]
+    if length(ids) == 0
+        println("Your prompt should not be empty.")
+        exit()
+    elseif length(ids) > config["n_ctx"]
+        println("Your prompt exceeds the context length. Try shorter prompt.")
+        exit()
     end
-    push!(ids, next_id)
+
+    buffer = UInt8[]
+    while true
+        x = transform(tensors, config, ids)
+
+        # ids are 0-based. Julia is 1-based.
+        next_id = argmax(x) - 1
+        decoded = decode_unique_encoding!(buffer, id_to_token[next_id])
+        printstyled(decoded, bold = true)
+
+        if length(ids) == config["n_ctx"]
+            popfirst!(ids)
+        end
+        push!(ids, next_id)
+    end
 end
+
+main()
