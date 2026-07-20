@@ -232,7 +232,14 @@ end
 #### Main ####
 
 function main()
-    # TODO: Usage message
+    if length(ARGS) ≠ 2
+        println("GPT-2 Inference with Julia")
+        println()
+        println("Usage: julia main.jl <path to model repository> <your prompt>")
+        println()
+        println("You may have to enclose 'your prompt' with quotes.")
+        exit()
+    end
 
     #### Loading Files ####
 
