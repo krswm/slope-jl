@@ -1,10 +1,72 @@
-## My Attempt
+# GPT-2 Inference with Julia
 
-I want to build a local LLM software
-that loads pretrained models
-and generates text with it.
-Such thing is called an inference engine.
-I want to achieve it from scratch.
+I built a GPT-2 inference engine from scratch in Julia.
 
-I used `ollama` to observe its behavior as an LLM inference engine.
-Except for this, I did *not* use generative AI for this project.
+![Demo](asset/demo.gif)
+
+I also built [a Rust counterpart](https://github.com/krswm/slope-rs).
+
+Last updated on 2026-07-20.
+
+## Quickstart
+
+I made this project just for educational purpose. Use at your own risk.
+
+It is assumed that you have Git, Curl, and Julia installed on your machine.
+
+Step 1: **Clone this repository.**
+
+```
+git clone https://github.com/krswm/slope-jl.git
+```
+
+Step 2: **Download the pretrained GPT-2 model from Hugging Face.**
+
+```
+curl --progress-bar --location --remote-name --output-dir model --create-dirs 'https://huggingface.co/openai-community/gpt2/resolve/main/{config.json,vocab.json,merges.txt,model.safetensors}'
+```
+
+Step 3: **Start generating text.**
+The GPT-2 model is not for chat conversation, but for text continuation.
+Watch the model continues your prompt.
+
+```
+cd slope-jl
+julia main.jl ../model 'Natural language processing is a branch of computer science. We study' 2> /dev/null
+```
+
+Hit `Control+C` to stop generating text.
+
+## Supported Models
+
+This program only supports models that are build on the GPT-2 architecture.
+
+This program only supports models that have the following files in the model repository.
+
+- `config.json`
+- `vocab.json`
+- `merges.txt`
+- `model.safetensors`
+
+I have verified that this program works with the following models.
+
+- [GPT-2](https://huggingface.co/openai-community/gpt2)
+- [GPT-2 Medium](https://huggingface.co/openai-community/gpt2-medium)
+- [GPT-2 Large](https://huggingface.co/openai-community/gpt2-large)
+- [GPT-2 XL](https://huggingface.co/openai-community/gpt2-xl)
+
+## Credits
+
+- [GPT-2](https://huggingface.co/openai-community/gpt2) for devising an influental LLM architecture.
+- [*GPT in 60 Lines of NumPy*](https://jaykmody.com/blog/gpt-from-scratch/) (a blog post) for teaching me how to implement a GPT-2 inference engine from scratch.
+- [*Implementing A Byte Pair Encoding (BPE) Tokenizer From Scratch*](https://sebastianraschka.com/blog/2025/bpe-from-scratch.html) (a blog post) for teaching me how to implement a BPE tokenizer from scratch.
+- [Julia](https://github.com/JuliaLang/julia) for providing me an amazing programming language.
+
+## Development
+
+This is a hobby project of mine I started from scratch.
+
+I started this project on 2026-07-03 and finished my first implementation on 2026-07-20.
+
+I used open source LLM inference engines (Ollama, etc.) and open source LLM models (TinyLlama, GPT-2, etc.) only for the purpose to observe their behavior as LLM architecture.
+Except for that, I did **not** use generative AI for this project at all.
