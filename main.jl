@@ -53,8 +53,8 @@ function tokenize(token_to_id, ranks, input)
 
             while length(symbols) ≥ 2
                 pairs = [
-                    (token0, token1) for (token0, token1) ∈
-                    zip(symbols[1:(end-1)], symbols[2:end])
+                    (token0, token1) for
+                    (token0, token1) ∈ zip(symbols[1:(end-1)], symbols[2:end])
                 ]
 
                 best_rank = typemax(Int)
@@ -181,7 +181,8 @@ function transform(tensors, config, ids)
         #### Masked Multi-Head Attention ####
 
         y =
-            (x .- mean(x, dims = 2)) ./ .√(var(x, corrected = false, dims = 2) .+ 1.0f-5) .*
+            (x .- mean(x, dims = 2)) ./
+            .√(var(x, corrected = false, dims = 2) .+ config["layer_norm_epsilon"]) .*
             permutedims(tensors["h.$i_layer.ln_1.weight"]) .+
             permutedims(tensors["h.$i_layer.ln_1.bias"])
 
@@ -220,7 +221,8 @@ function transform(tensors, config, ids)
         #### Feed Forward ####
 
         y =
-            (x .- mean(x, dims = 2)) ./ .√(var(x, corrected = false, dims = 2) .+ 1.0f-5) .*
+            (x .- mean(x, dims = 2)) ./
+            .√(var(x, corrected = false, dims = 2) .+ config["layer_norm_epsilon"]) .*
             permutedims(tensors["h.$i_layer.ln_2.weight"]) .+
             permutedims(tensors["h.$i_layer.ln_2.bias"])
 
@@ -243,7 +245,8 @@ function transform(tensors, config, ids)
     x = x[end, :]
 
     x =
-        (x .- mean(x)) ./ .√(var(x, corrected = false) + 1.0f-5) .* tensors["ln_f.weight"] + tensors["ln_f.bias"]
+        (x .- mean(x)) ./ .√(var(x, corrected = false) + config["layer_norm_epsilon"]) .* tensors["ln_f.weight"] +
+        tensors["ln_f.bias"]
 
     tensors["wte.weight"] * x
 end
