@@ -54,7 +54,7 @@ function tokenize(token_to_id, ranks, input)
             while length(symbols) ≥ 2
                 pairs = [
                     (token0, token1) for (token0, token1) ∈
-                    zip(symbols[begin:(end-1)], symbols[(begin+1):end])
+                    zip(symbols[1:(end-1)], symbols[2:end])
                 ]
 
                 best_rank = typemax(Int)
@@ -141,15 +141,15 @@ function decode_unique_encoding(buffer, encoded)
        bytes[end-1] ∈ 0x80:0xBF &&
        bytes[end] ∈ 0x80:0xBF
         # Case C3
-        decoded = bytes[begin:(end-3)]
+        decoded = bytes[1:(end-3)]
         buffer = bytes[(end-2):end]
     elseif length(bytes) ≥ 2 && bytes[end-1] ∈ 0xC0:0xEF && bytes[end] ∈ 0x80:0xBF
         # Case B2 and Case C2
-        decoded = bytes[begin:(end-2)]
+        decoded = bytes[1:(end-2)]
         buffer = bytes[(end-1):end]
     elseif length(bytes) ≥ 1 && bytes[end] ∈ 0xC0:0xF7
         # Case A1, Case B1, and Case C1
-        decoded = bytes[begin:(end-1)]
+        decoded = bytes[1:(end-1)]
         buffer = bytes[end:end]
     else
         # No unfinished sequence at the end
@@ -175,7 +175,7 @@ function transform(tensors, config, ids)
     #### Embedding ####
 
     # ids are 0-based. Julia is 1-based.
-    x = tensors["wte.weight"][ids .+ 1, :] .+ tensors["wpe.weight"][1:length(ids), :]
+    x = tensors["wte.weight"][ids .+ 1, :] + tensors["wpe.weight"][1:length(ids), :]
 
     for i_layer = 0:(config["n_layer"]-1)
         #### Masked Multi-Head Attention ####
@@ -228,7 +228,7 @@ function transform(tensors, config, ids)
             y * tensors["h.$i_layer.mlp.c_fc.weight"] .+
             permutedims(tensors["h.$i_layer.mlp.c_fc.bias"])
 
-        y = 0.5f0 .* y .* (1.0f0 .+ tanh.(√(2.0f0 / π) .* (y .+ 0.044715f0 .* (y .^ 3))))
+        y = (tanh.((y .^ 3 * 0.044715f0 + y) * √(2.0f0 / π)) .+ 1.0f0) .* y * 0.5f0
 
         y =
             y * tensors["h.$i_layer.mlp.c_proj.weight"] .+
