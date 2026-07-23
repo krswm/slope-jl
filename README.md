@@ -26,13 +26,19 @@ Step 2: **Download the pretrained GPT-2 model from Hugging Face.**
 curl --progress-bar --location --remote-name --output-dir model --create-dirs 'https://huggingface.co/openai-community/gpt2/resolve/main/{config.json,vocab.json,merges.txt,model.safetensors}'
 ```
 
-Step 3: **Start generating text.**
+Step 3: **Install dependencies.**
+
+```
+cd slope-jl
+julia --project --eval 'using Pkg; Pkg.instantiate()'
+```
+
+Step 4: **Start generating text.**
 The GPT-2 model is not for chat conversation, but for text continuation.
 Watch the model continues your prompt.
 
 ```
-cd slope-jl
-julia main.jl ../model 'Natural language processing is a branch of computer science. We study' 2> /dev/null
+julia --project main.jl ../model 'Natural language processing is a branch of computer science. We study' 2> /dev/null
 ```
 
 Hit `Control+C` to stop generating text.
