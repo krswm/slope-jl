@@ -6,39 +6,37 @@ I built a GPT-2 inference engine from scratch in Julia.
 
 I also built [a Rust counterpart](https://github.com/krswm/slope-rs).
 
-Last updated on 2026-07-20.
-
 ## Quickstart
 
 I made this project just for educational purpose. Use at your own risk.
 
-It is assumed that you have Git, Curl, and Julia installed on your machine.
+It is assumed that you have Git, cURL, and Julia installed on your machine.
 
-Step 1: **Clone this repository.**
-
-```
-git clone https://github.com/krswm/slope-jl.git
-```
-
-Step 2: **Download the pretrained GPT-2 model from Hugging Face.**
+**Download a pretrained GPT-2 model from Hugging Face.**
 
 ```
 curl --progress-bar --location --remote-name --output-dir model --create-dirs 'https://huggingface.co/openai-community/gpt2/resolve/main/{config.json,vocab.json,merges.txt,model.safetensors}'
 ```
 
-Step 3: **Install dependencies.**
+**Clone this repository.**
 
 ```
+git clone https://github.com/krswm/slope-jl.git
 cd slope-jl
+```
+
+**Install packages.**
+
+```
 julia --project --eval 'using Pkg; Pkg.instantiate()'
 ```
 
-Step 4: **Start generating text.**
+**Start generating text.**
 The GPT-2 model is not for chat conversation, but for text continuation.
 Watch the model continues your prompt.
 
 ```
-julia --project main.jl ../model 'Natural language processing is a branch of computer science. We study' 2> /dev/null
+julia --project --handle-signals=no main.jl ../model 'Natural language processing is a branch of computer science. We study'
 ```
 
 Hit `Control+C` to stop generating text.
