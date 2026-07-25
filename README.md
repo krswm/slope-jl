@@ -10,7 +10,7 @@ I also built [a Rust counterpart](https://github.com/krswm/slope-rs).
 
 I made this project just for educational purpose. Use at your own risk.
 
-It is assumed that you have Git, cURL, and Julia installed on your machine.
+It is assumed that you have cURL, Git, and Julia installed on your machine.
 
 **Download a pretrained GPT-2 model from Hugging Face.**
 
