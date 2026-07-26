@@ -33,13 +33,12 @@ julia --project --eval 'using Pkg; Pkg.instantiate()'
 
 **Start generating text.**
 The GPT-2 model is not for chat conversation, but for text continuation.
-Watch the model continues your prompt.
 
 ```
 julia --project --handle-signals=no main.jl ../model 'Natural language processing is a branch of computer science. We study'
 ```
 
-Hit `Control+C` to stop generating text.
+Press `Control+C` to stop generating text.
 
 ## Supported Models
 
