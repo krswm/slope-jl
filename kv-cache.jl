@@ -170,91 +170,126 @@ end
 
 #### Transformer ####
 
-function mshow(matrix) 
+function mshow(matrix)
     show(IOContext(stdout, :limit => true), "text/plain", matrix)
     println()
 end
 
 # The transformer for the GPT-2 architecture.
-function transform(tensors, config, ids)
+function transform!(tensors, config, id, pos, cached_k, cached_v)
     #### Embedding ####
 
     # ids are 0-based. Julia is 1-based.
-    x = tensors["wte.weight"][ids .+ 1, :] + tensors["wpe.weight"][1:length(ids), :]
+    x = tensors["wte.weight"][id+1, :] + tensors["wpe.weight"][pos, :]
+    #=
+    println("[A]")
+    mshow(x)
+    =#
+
+    # The position embedding weight matrix
+    # only has the row of n_ctx.
+    # What should I do when the number of generated token
+    # exceeds n_ctx?
+    # I'll stop it when it reaches just for now.
+    # Maybe there's better implementation or maybe not...
 
     for i_layer = 0:(config["n_layer"]-1)
         #### Masked Multi-Head Attention ####
 
         y =
-            (x .- mean(x, dims = 2)) ./
-            .√(var(x, corrected = false, dims = 2) .+ config["layer_norm_epsilon"]) .*
-            permutedims(tensors["h.$i_layer.ln_1.weight"]) .+
-            permutedims(tensors["h.$i_layer.ln_1.bias"])
+            (x .- mean(x)) ./
+            .√(var(x, corrected=false) + config["layer_norm_epsilon"]) .*
+            tensors["h.$i_layer.ln_1.weight"] +
+            tensors["h.$i_layer.ln_1.bias"]
+
+        println("[C]")
+        mshow(y)
 
         y =
-            y * tensors["h.$i_layer.attn.c_attn.weight"] .+
-            permutedims(tensors["h.$i_layer.attn.c_attn.bias"])
+            permutedims(tensors["h.$i_layer.attn.c_attn.weight"]) * y +
+            tensors["h.$i_layer.attn.c_attn.bias"]
 
-        q, k, v = [y[:, (config["n_embd"]*(i-1)+1):(config["n_embd"]*i)] for i = 1:3]
+        println("[D]")
+        mshow(y)
 
-        if i_layer == 10
-            q |> mshow
-        end
+        # q, k, v = [y[:, (config["n_embd"]*(i-1)+1):(config["n_embd"]*i)] for i = 1:3]
+        q, k, v = [y[(config["n_embd"]*(i-1)+1):(config["n_embd"]*i)] for i = 1:3]
+
+        k = vcat(cached_k[i_layer + 1], permutedims(k))
+        v = vcat(cached_v[i_layer + 1], permutedims(v))
+        println("[E]")
+        mshow(k)
+
+        cached_k[i_layer + 1] = k
+        cached_v[i_layer + 1] = v
 
         size_of_head = config["n_embd"] ÷ config["n_head"]
 
-        q_heads = [q[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
+        q_heads = [q[(size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
         k_heads = [k[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
         v_heads = [v[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
 
         y = cat(
             (
                 begin
+                    println("[F]")
+                    permutedims(q) |> summary |> mshow
+                    permutedims(k) |> summary |> mshow
                     z = (
-                        tril(q * transpose(k) ./ √Float32(size(q, 2))) +
-                        triu(fill(-Inf32, (size(q, 1), size(q, 1))), 1)
+                        tril(permutedims(q) * transpose(k) ./ √Float32(pos)) +
+                        triu(fill(-Inf32, (pos, pos)), 1)
                     )
-                    z = exp.(z .- maximum(z, dims = 2))
-                    z ./ sum(z, dims = 2) * v
+                    println("[G]")
+                    z = exp.(z .- maximum(z, dims=2))
+                    println("[H]")
+                    z ./ sum(z, dims=2) * v
+                    println("[I]")
+                    # permutedims, permutedims, ...
                 end for (q, k, v) ∈ zip(q_heads, k_heads, v_heads)
             )...,
-            dims = 2,
+            dims=1,
         )
 
         y =
-            y * tensors["h.$i_layer.attn.c_proj.weight"] .+
-            permutedims(tensors["h.$i_layer.attn.c_proj.bias"])
+            permutedims(tensors["h.$i_layer.attn.c_proj.weight"]) * y +
+            tensors["h.$i_layer.attn.c_proj.bias"]
+        #=
+        println("[B]")
+        mshow(y[end, :])
+        =#
 
         x += y
 
         #### Feed Forward ####
 
         y =
-            (x .- mean(x, dims = 2)) ./
-            .√(var(x, corrected = false, dims = 2) .+ config["layer_norm_epsilon"]) .*
-            permutedims(tensors["h.$i_layer.ln_2.weight"]) .+
-            permutedims(tensors["h.$i_layer.ln_2.bias"])
+            (x .- mean(x)) ./
+            .√(var(x, corrected=false) .+ config["layer_norm_epsilon"]) .*
+            (tensors["h.$i_layer.ln_2.weight"]) .+
+            (tensors["h.$i_layer.ln_2.bias"])
 
         y =
-            y * tensors["h.$i_layer.mlp.c_fc.weight"] .+
-            permutedims(tensors["h.$i_layer.mlp.c_fc.bias"])
+            permutedims(tensors["h.$i_layer.mlp.c_fc.weight"]) * y +
+            tensors["h.$i_layer.mlp.c_fc.bias"]
 
         y = (tanh.((y .^ 3 * 0.044715f0 + y) * √(2.0f0 / π)) .+ 1.0f0) .* y * 0.5f0
 
         y =
-            y * tensors["h.$i_layer.mlp.c_proj.weight"] .+
-            permutedims(tensors["h.$i_layer.mlp.c_proj.bias"])
+            permutedims(tensors["h.$i_layer.mlp.c_proj.weight"]) * y +
+            tensors["h.$i_layer.mlp.c_proj.bias"]
 
         x += y
     end
 
     #### Projection ####
 
+    #=
     # I only need the last row to predict the next token ID.
     x = x[end, :]
+    =#
 
     x =
-        (x .- mean(x)) ./ .√(var(x, corrected = false) + config["layer_norm_epsilon"]) .* tensors["ln_f.weight"] +
+        (x .- mean(x)) ./ .√(var(x, corrected=false) + config["layer_norm_epsilon"]) .* tensors["ln_f.weight"] +
         tensors["ln_f.bias"]
 
     tensors["wte.weight"] * x
@@ -266,7 +301,7 @@ function main()
     if length(ARGS) ≠ 2
         println("GPT-2 Inference with Julia")
         print("Usage: ")
-        printstyled("julia main.jl <path to model repository> <your prompt>", bold = true)
+        printstyled("julia main.jl <path to model repository> <your prompt>", bold=true)
         println()
         println("You may have to enclose 'your prompt' with quotes.")
         exit()
@@ -312,22 +347,31 @@ function main()
 
     #### Inference ####
 
-    # printstyled(ARGS[2], bold = true, color = :light_black)
+    printstyled(ARGS[2], bold=true, color=:light_black)
+
+    # Initialize the KV-cache with the input token IDs.
+    cached_k = [Array{Float32}(undef, 0, config["n_embd"]) for _ = 1:config["n_layer"]]
+    cached_v = [Array{Float32}(undef, 0, config["n_embd"]) for _ = 1:config["n_layer"]]
+    next_id = 0
+    for (pos, id) ∈ enumerate(ids)
+        next_id = transform!(tensors, config, id, pos, cached_k, cached_v)
+    end
 
     buffer = UInt8[]
-    # while true
-    for _ = 1:4
-        x = transform(tensors, config, ids)
+    for pos = length(ids):config["n_ctx"]
+        x = transform!(tensors, config, next_id, pos, cached_k, cached_v)
 
         # ids are 0-based. Julia is 1-based.
         next_id = argmax(x) - 1
         (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[next_id])
-        # printstyled(decoded, bold = true)
+        printstyled(decoded, bold=true)
 
+        #=
         if length(ids) == config["n_ctx"]
             popfirst!(ids)
         end
         push!(ids, next_id)
+        =#
     end
 end
 
