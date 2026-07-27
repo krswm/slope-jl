@@ -1,3 +1,19 @@
+# My Memo
+
+I want to implement the KV cache.
+Then I wondered why it's not QKV cache and I researched and I found an interesting Stack Exchange post.
+
+<https://ai.stackexchange.com/questions/48185/why-not-cache-the-q-query-matrix>
+
+I don't have to get all Q every time at first place!
+
+Yes I already employed a similar tecknique on the Projection part of the transformer
+but the similar thing can be applied more broadly!
+
+I need this optimization before going to kv cache implementation.
+
+I verified in kv-cache.jl and confirmed all QKV is same except for the last row.
+
 # GPT-2 Inference with Julia
 
 I built a GPT-2 inference engine from scratch in Julia.
