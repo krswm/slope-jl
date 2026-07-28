@@ -176,30 +176,39 @@ function mshow(matrix)
 end
 
 # The transformer for the GPT-2 architecture.
-function transform(tensors, config, ids)
+function transform!(tensors, config, id, pos, cached_k, cached_v)
     #### Embedding ####
 
     # ids are 0-based. Julia is 1-based.
-    x = tensors["wte.weight"][ids .+ 1, :] + tensors["wpe.weight"][1:length(ids), :]
+    x = tensors["wte.weight"][id + 1, :] + tensors["wpe.weight"][pos, :]
+
+    println("A")
+    mshow(x)
 
     for i_layer = 0:(config["n_layer"]-1)
         #### Masked Multi-Head Attention ####
 
         y =
-            (x .- mean(x, dims = 2)) ./
-            .√(var(x, corrected = false, dims = 2) .+ config["layer_norm_epsilon"]) .*
-            permutedims(tensors["h.$i_layer.ln_1.weight"]) .+
-            permutedims(tensors["h.$i_layer.ln_1.bias"])
+            (x .- mean(x)) ./
+            √(var(x, corrected = false) + config["layer_norm_epsilon"]) .*
+            tensors["h.$i_layer.ln_1.weight"] .+
+            tensors["h.$i_layer.ln_1.bias"]
+
+        if i_layer == 0
+            println("B")
+            mshow(y)
+        end
 
         y =
-            y * tensors["h.$i_layer.attn.c_attn.weight"] .+
-            permutedims(tensors["h.$i_layer.attn.c_attn.bias"])
+            permutedims(tensors["h.$i_layer.attn.c_attn.weight"]) * y +
+            tensors["h.$i_layer.attn.c_attn.bias"]
+
+        if i_layer == 0
+            println("C")
+            mshow(y)
+        end
 
         q, k, v = [y[:, (config["n_embd"]*(i-1)+1):(config["n_embd"]*i)] for i = 1:3]
-
-        if i_layer == 10
-            q |> mshow
-        end
 
         size_of_head = config["n_embd"] ÷ config["n_head"]
 
@@ -314,20 +323,35 @@ function main()
 
     # printstyled(ARGS[2], bold = true, color = :light_black)
 
+    cached_k = Array{Float32}(undef, 0, config["n_embd"])
+    cached_v = Array{Float32}(undef, 0, config["n_embd"])
+
+    pos = 1
+
+    for id = ids
+        x = transform!(tensors, config, id, pos, cached_k, cached_v)
+        pos += 1
+    end
+
+    next_id = argmax(x) - 1
+
     buffer = UInt8[]
-    # while true
-    for _ = 1:4
-        x = transform(tensors, config, ids)
+    while pos < length(ids) + 1
+        x = transform!(tensors, config, next_id, pos, cached_k, cached_v)
 
         # ids are 0-based. Julia is 1-based.
         next_id = argmax(x) - 1
         (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[next_id])
         # printstyled(decoded, bold = true)
 
+        pos += 1
+
+        #=
         if length(ids) == config["n_ctx"]
             popfirst!(ids)
         end
         push!(ids, next_id)
+        =#
     end
 end
 

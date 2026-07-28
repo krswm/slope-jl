@@ -170,12 +170,20 @@ end
 
 #### Transformer ####
 
+function mshow(matrix) 
+    show(IOContext(stdout, :limit => true), "text/plain", matrix)
+    println()
+end
+
 # The transformer for the GPT-2 architecture.
 function transform(tensors, config, ids)
     #### Embedding ####
 
     # ids are 0-based. Julia is 1-based.
     x = tensors["wte.weight"][ids .+ 1, :] + tensors["wpe.weight"][1:length(ids), :]
+
+    println("A")
+    mshow(x)
 
     for i_layer = 0:(config["n_layer"]-1)
         #### Masked Multi-Head Attention ####
@@ -186,9 +194,19 @@ function transform(tensors, config, ids)
             permutedims(tensors["h.$i_layer.ln_1.weight"]) .+
             permutedims(tensors["h.$i_layer.ln_1.bias"])
 
+        if i_layer == 0
+            println("B")
+            mshow(y)
+        end
+
         y =
             y * tensors["h.$i_layer.attn.c_attn.weight"] .+
             permutedims(tensors["h.$i_layer.attn.c_attn.bias"])
+
+        if i_layer == 0
+            println("C")
+            mshow(y)
+        end
 
         q, k, v = [y[:, (config["n_embd"]*(i-1)+1):(config["n_embd"]*i)] for i = 1:3]
 
@@ -303,16 +321,17 @@ function main()
 
     #### Inference ####
 
-    printstyled(ARGS[2], bold = true, color = :light_black)
+    # printstyled(ARGS[2], bold = true, color = :light_black)
 
     buffer = UInt8[]
-    while true
+    # while true
+    for _ = 1:4
         x = transform(tensors, config, ids)
 
         # ids are 0-based. Julia is 1-based.
         next_id = argmax(x) - 1
         (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[next_id])
-        printstyled(decoded, bold = true)
+        # printstyled(decoded, bold = true)
 
         if length(ids) == config["n_ctx"]
             popfirst!(ids)
