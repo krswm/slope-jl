@@ -234,15 +234,18 @@ function transform!(tensors, config, id, pos, cached_k, cached_v)
 
         if i_layer == 0
             println("I")
-            mshow(cached_k[1])
+            mshow(cached_k[i_layer + 1][1])
             mshow(permutedims(k_heads[1]))
-            mshow(vcat(cached_k[1], permutedims(k_heads[1])))
+            mshow(vcat(cached_k[i_layer + 1][1], permutedims(k_heads[1])))
         end
         
         # Here I'll use the KV-cache!
-        k_heads_full = [vcat(cached, permutedims(head)) for (cached, head) = zip(cached_k, k_heads)]
-        v_heads_full = [vcat(cached, permutedims(head)) for (cached, head) = zip(cached_v, v_heads)]
+        k_heads_full = [vcat(cached, permutedims(head)) for (cached, head) = zip(cached_k[i_layer + 1], k_heads)]
+        v_heads_full = [vcat(cached, permutedims(head)) for (cached, head) = zip(cached_v[i_layer + 1], v_heads)]
         # TODO: Can I use broadcasting `.` here?
+
+        cached_k[i_layer + 1] = k_heads_full
+        cached_v[i_layer + 1] = v_heads_full
 
         if i_layer == 0
             println("full")
@@ -266,10 +269,12 @@ function transform!(tensors, config, id, pos, cached_k, cached_v)
         )
         =#
 
+        # I haven't realized until now that
+        # I don't need the causal mask anymore
+        # if I use the KV cache!!!
         y = [begin
             z = (
-                tril(permutedims(q) * transpose(k) ./ √Float32(length(q))) +
-                triu(fill(-Inf32, (pos, pos)), 1)
+                permutedims(q) * transpose(k) ./ √Float32(length(q))
             )
             z = exp.(z .- maximum(z))
             z ./ sum(z) * v
@@ -301,31 +306,48 @@ function transform!(tensors, config, id, pos, cached_k, cached_v)
         #### Feed Forward ####
 
         y =
-            (x .- mean(x, dims = 2)) ./
-            .√(var(x, corrected = false, dims = 2) .+ config["layer_norm_epsilon"]) .*
-            permutedims(tensors["h.$i_layer.ln_2.weight"]) .+
-            permutedims(tensors["h.$i_layer.ln_2.bias"])
+            (x .- mean(x)) ./
+            √(var(x, corrected = false) + ε) .*
+            tensors["h.$i_layer.ln_2.weight"] .+
+            tensors["h.$i_layer.ln_2.bias"]
+
+        if i_layer == 0
+            println("K")
+            y |> mshow
+        end
 
         y =
-            y * tensors["h.$i_layer.mlp.c_fc.weight"] .+
-            permutedims(tensors["h.$i_layer.mlp.c_fc.bias"])
+            permutedims(tensors["h.$i_layer.mlp.c_fc.weight"]) * y +
+            tensors["h.$i_layer.mlp.c_fc.bias"]
+
+        if i_layer == 0
+            println("L")
+            y |> mshow
+        end
 
         y = (tanh.((y .^ 3 * 0.044715f0 + y) * √(2.0f0 / π)) .+ 1.0f0) .* y * 0.5f0
 
+        if i_layer == 0
+            println("M")
+            y |> mshow
+        end
+
         y =
-            y * tensors["h.$i_layer.mlp.c_proj.weight"] .+
-            permutedims(tensors["h.$i_layer.mlp.c_proj.bias"])
+            permutedims(tensors["h.$i_layer.mlp.c_proj.weight"]) * y +
+            tensors["h.$i_layer.mlp.c_proj.bias"]
 
         x += y
+
+        if i_layer == 0
+            println("O")
+            x |> mshow
+        end
     end
 
     #### Projection ####
 
-    # I only need the last row to predict the next token ID.
-    x = x[end, :]
-
     x =
-        (x .- mean(x)) ./ .√(var(x, corrected = false) + config["layer_norm_epsilon"]) .* tensors["ln_f.weight"] +
+        (x .- mean(x)) ./ .√(var(x, corrected = false) + ε) .* tensors["ln_f.weight"] +
         tensors["ln_f.bias"]
 
     tensors["wte.weight"] * x
@@ -387,12 +409,15 @@ function main()
 
     size_of_head = config["n_embd"] ÷ config["n_head"]
 
-    cached_k = [Array{Float32}(undef, 0, size_of_head) for _ = 1:config["n_head"]]
-    cached_v = [Array{Float32}(undef, 0, size_of_head) for _ = 1:config["n_head"]]
+    cached_k = [[Array{Float32}(undef, 0, size_of_head) for _ = 1:config["n_head"]] for _ = 1:config["n_layer"]]
+    cached_v = [[Array{Float32}(undef, 0, size_of_head) for _ = 1:config["n_head"]] for _ = 1:config["n_layer"]]
 
     pos = 1
 
+    x = undef
+
     for id = ids
+        printstyled("$pos\n", reverse=true)
         x = transform!(tensors, config, id, pos, cached_k, cached_v)
         pos += 1
     end
@@ -400,7 +425,7 @@ function main()
     next_id = argmax(x) - 1
 
     buffer = UInt8[]
-    while pos < length(ids) + 1
+    while pos < length(ids) + 3
         x = transform!(tensors, config, next_id, pos, cached_k, cached_v)
 
         # ids are 0-based. Julia is 1-based.

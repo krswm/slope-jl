@@ -289,17 +289,42 @@ function transform(tensors, config, ids)
             permutedims(tensors["h.$i_layer.ln_2.weight"]) .+
             permutedims(tensors["h.$i_layer.ln_2.bias"])
 
+        if i_layer == 0
+            println("K")
+            y |> mshow
+        end
+
         y =
             y * tensors["h.$i_layer.mlp.c_fc.weight"] .+
             permutedims(tensors["h.$i_layer.mlp.c_fc.bias"])
 
+        if i_layer == 0
+            println("L")
+            y |> mshow
+        end
+
         y = (tanh.((y .^ 3 * 0.044715f0 + y) * √(2.0f0 / π)) .+ 1.0f0) .* y * 0.5f0
+
+        if i_layer == 0
+            println("M")
+            y |> mshow
+        end
 
         y =
             y * tensors["h.$i_layer.mlp.c_proj.weight"] .+
             permutedims(tensors["h.$i_layer.mlp.c_proj.bias"])
 
+        if i_layer == 0
+            println("N")
+            y |> mshow
+        end
+
         x += y
+
+        if i_layer == 0
+            println("O")
+            x |> mshow
+        end
     end
 
     #### Projection ####
