@@ -185,12 +185,14 @@ function transform!(tensors, config, id, pos, cached_k, cached_v)
     println("A")
     mshow(x)
 
+    ε = Float32(config["layer_norm_epsilon"])
+
     for i_layer = 0:(config["n_layer"]-1)
         #### Masked Multi-Head Attention ####
 
         y =
             (x .- mean(x)) ./
-            √(var(x, corrected = false) + config["layer_norm_epsilon"]) .*
+            √(var(x, corrected = false) + ε) .*
             tensors["h.$i_layer.ln_1.weight"] .+
             tensors["h.$i_layer.ln_1.bias"]
 
@@ -208,33 +210,93 @@ function transform!(tensors, config, id, pos, cached_k, cached_v)
             mshow(y)
         end
 
-        q, k, v = [y[:, (config["n_embd"]*(i-1)+1):(config["n_embd"]*i)] for i = 1:3]
+        q, k, v = [y[(config["n_embd"]*(i-1)+1):(config["n_embd"]*i)] for i = 1:3]
+
+        if i_layer == 0
+            println("D")
+            mshow(q)
+            mshow(k)
+            mshow(v)
+        end
 
         size_of_head = config["n_embd"] ÷ config["n_head"]
 
-        q_heads = [q[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
-        k_heads = [k[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
-        v_heads = [v[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
+        q_heads = [q[(size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
+        k_heads = [k[(size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
+        v_heads = [v[(size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
 
+        if i_layer == 0
+            println("E")
+            mshow(q_heads[1])
+            mshow(k_heads[1])
+            mshow(v_heads[1])
+        end
+
+        if i_layer == 0
+            println("I")
+            mshow(cached_k[1])
+            mshow(permutedims(k_heads[1]))
+            mshow(vcat(cached_k[1], permutedims(k_heads[1])))
+        end
+        
+        # Here I'll use the KV-cache!
+        k_heads_full = [vcat(cached, permutedims(head)) for (cached, head) = zip(cached_k, k_heads)]
+        v_heads_full = [vcat(cached, permutedims(head)) for (cached, head) = zip(cached_v, v_heads)]
+        # TODO: Can I use broadcasting `.` here?
+
+        if i_layer == 0
+            println("full")
+            mshow(k_heads_full[1])
+            mshow(v_heads_full[1])
+        end
+
+        #=
         y = cat(
             (
                 begin
                     z = (
-                        tril(q * transpose(k) ./ √Float32(size(q, 2))) +
-                        triu(fill(-Inf32, (size(q, 1), size(q, 1))), 1)
+                        tril(q * transpose(k) ./ √Float32(pos)) +
+                        triu(fill(-Inf32, (length(q), length(q))), 1)
                     )
-                    z = exp.(z .- maximum(z, dims = 2))
-                    z ./ sum(z, dims = 2) * v
+                    z = exp.(z .- maximum(z))
+                    z ./ sum(z) * v
                 end for (q, k, v) ∈ zip(q_heads, k_heads, v_heads)
             )...,
-            dims = 2,
+            dims = 1
         )
+        =#
+
+        y = [begin
+            z = (
+                tril(permutedims(q) * transpose(k) ./ √Float32(length(q))) +
+                triu(fill(-Inf32, (pos, pos)), 1)
+            )
+            z = exp.(z .- maximum(z))
+            z ./ sum(z) * v
+        end for (q, k, v) ∈ zip(q_heads, k_heads_full, v_heads_full)]
+
+        if i_layer == 0
+            println("H")
+            mshow(y[1])
+        end
+
+        y = hcat(y...)
+
+        if i_layer == 0
+            println("G")
+            y |> mshow
+        end
 
         y =
-            y * tensors["h.$i_layer.attn.c_proj.weight"] .+
-            permutedims(tensors["h.$i_layer.attn.c_proj.bias"])
+            permutedims(tensors["h.$i_layer.attn.c_proj.weight"]) * vec(y) +
+            tensors["h.$i_layer.attn.c_proj.bias"]
 
         x += y
+
+        if i_layer == 0
+            println("J")
+            x |> mshow
+        end
 
         #### Feed Forward ####
 
@@ -323,8 +385,10 @@ function main()
 
     # printstyled(ARGS[2], bold = true, color = :light_black)
 
-    cached_k = Array{Float32}(undef, 0, config["n_embd"])
-    cached_v = Array{Float32}(undef, 0, config["n_embd"])
+    size_of_head = config["n_embd"] ÷ config["n_head"]
+
+    cached_k = [Array{Float32}(undef, 0, size_of_head) for _ = 1:config["n_head"]]
+    cached_v = [Array{Float32}(undef, 0, size_of_head) for _ = 1:config["n_head"]]
 
     pos = 1
 

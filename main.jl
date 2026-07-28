@@ -210,11 +210,46 @@ function transform(tensors, config, ids)
 
         q, k, v = [y[:, (config["n_embd"]*(i-1)+1):(config["n_embd"]*i)] for i = 1:3]
 
+        if i_layer == 0
+            println("D")
+            mshow(q)
+            mshow(k)
+            mshow(v)
+        end
+
         size_of_head = config["n_embd"] ÷ config["n_head"]
 
         q_heads = [q[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
         k_heads = [k[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
         v_heads = [v[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
+
+        if i_layer == 0
+            println("E")
+            mshow(q_heads[1])
+            mshow(k_heads[1])
+            mshow(v_heads[1])
+        end
+
+        yy = [begin
+            z = (
+                tril(q * transpose(k) ./ √Float32(size(q, 2))) +
+                triu(fill(-Inf32, (size(q, 1), size(q, 1))), 1)
+            )
+            z = exp.(z .- maximum(z, dims = 2))
+            z ./ sum(z, dims = 2) * v
+        end for (q, k, v) ∈ zip(q_heads, k_heads, v_heads)]
+
+        if i_layer == 0
+            println("H")
+            mshow(yy[1])
+        end
+
+        yy = cat(yy..., dims = 2)
+
+        if i_layer == 0
+            println("G")
+            mshow(yy)
+        end
 
         y = cat(
             (
@@ -230,11 +265,21 @@ function transform(tensors, config, ids)
             dims = 2,
         )
 
+        if i_layer == 0
+            println("F")
+            mshow(y)
+        end
+        
         y =
             y * tensors["h.$i_layer.attn.c_proj.weight"] .+
             permutedims(tensors["h.$i_layer.attn.c_proj.bias"])
 
         x += y
+
+        if i_layer == 0
+            println("J")
+            x |> mshow
+        end
 
         #### Feed Forward ####
 
