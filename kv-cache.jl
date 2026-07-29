@@ -176,15 +176,15 @@ function mshow(matrix)
 end
 
 # The transformer for the GPT-2 architecture.
-function transform!(tensors, config, id, pos, cached_k, cached_v)
+function transform!(tensors, config, model, id, pos, cached_k, cached_v)
     ε = Float32(config["layer_norm_epsilon"])
 
     #### Embedding ####
 
     # ids are 0-based. Julia is 1-based.
-    x = tensors["wte.weight"][id+1, :] + tensors["wpe.weight"][pos, :]
+    x = model.wte[:, id+1] + model.wpe[:, pos]
 
-    for i_layer = 0:(config["n_layer"]-1)
+    for i_layer = 0:(model.n_layer - 1)
         #### Masked Multi-Head Attention ####
 
         y =
@@ -203,14 +203,10 @@ function transform!(tensors, config, id, pos, cached_k, cached_v)
         k_heads = [k[(size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
         v_heads = [v[(size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
 
-        k_heads_full = [
-            hcat(cached, head) for
-            (cached, head) in zip(cached_k[i_layer+1], k_heads)
-        ]
-        v_heads_full = [
-            hcat(cached, head) for
-            (cached, head) in zip(cached_v[i_layer+1], v_heads)
-        ]
+        k_heads_full =
+            [hcat(cached, head) for (cached, head) in zip(cached_k[i_layer+1], k_heads)]
+        v_heads_full =
+            [hcat(cached, head) for (cached, head) in zip(cached_v[i_layer+1], v_heads)]
 
         cached_k[i_layer+1] = k_heads_full
         cached_v[i_layer+1] = v_heads_full
@@ -255,10 +251,57 @@ function transform!(tensors, config, id, pos, cached_k, cached_v)
     x =
         (x .- mean(x)) ./ .√(var(x, corrected = false) + ε) .* tensors["ln_f.weight"] + tensors["ln_f.bias"]
 
-    tensors["wte.weight"] * x
+    model.wte_transposed * x
 end
 
 #### Main ####
+
+struct Model
+    ε::Float32
+    n_ctx::Int
+    n_embd::Int
+    n_head::Int
+    n_layer::Int
+    vocab_size::Int
+    wte::Array{Float32, 2}
+    wte_transposed::Array{Float32, 2}
+    wpe::Array{Float32, 2}
+end
+
+function get_model(tensors, config)
+    ε = Float32(config["layer_norm_epsilon"])
+    n_ctx = config["n_ctx"]
+    n_embd = config["n_embd"]
+    n_head = config["n_head"]
+    n_layer = config["n_layer"]
+    vocab_size = config["vocab_size"]
+
+    wte = permutedims(tensors["wte.weight"])
+    if size(wte) ≠ (n_embd, vocab_size)
+        error("tensor has unexpected size")
+    end
+
+    wte_transposed = wte'
+
+    wpe = permutedims(tensors["wpe.weight"])
+    if size(wpe) ≠ (n_embd, n_ctx)
+        error("tensor has unexpected size")
+    end
+
+    ln_1_γ = [tensors["h.$i.ln_1.weight"] for i = 0:(n_layer - 1)]
+    println(size.(ln_1_γ))
+    
+    if any(size.(ln_1_γ) .≠ (n_embd,))
+        error("tensor has unexpected size")
+    end
+    
+    ln_1_β = [tensors["h.$i.ln_1.bias"] for i = 0:(n_layer - 1)]
+    if any(size.(ln_1_β) .≠ (n_embd,))
+        error("tensor has unexpected size")
+    end
+
+    Model(ε, n_ctx, n_embd, n_head, n_layer, vocab_size, wte, wpe, wte_transposed)
+end
 
 function main()
     if length(ARGS) ≠ 2
@@ -310,6 +353,8 @@ function main()
 
     #### Inference ####
 
+    model = get_model(tensors, config)
+
     size_of_head = config["n_embd"] ÷ config["n_head"]
 
     cached_k = [
@@ -325,13 +370,13 @@ function main()
     for (pos, id) in enumerate(ids[1:(end-1)])
         (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[id])
         printstyled(decoded, bold = true, color = :light_black)
-        transform!(tensors, config, id, pos, cached_k, cached_v)
+        transform!(tensors, config, model, id, pos, cached_k, cached_v)
     end
     id = ids[end]
     (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[id])
     printstyled(decoded, bold = true, color = :light_black)
     for pos = (length(ids)+1):config["n_ctx"]
-        logits = transform!(tensors, config, id, pos, cached_k, cached_v)
+        logits = transform!(tensors, config, model, id, pos, cached_k, cached_v)
         id = argmax(logits) - 1
         (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[id])
         printstyled(decoded, bold = true)
