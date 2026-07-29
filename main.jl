@@ -182,9 +182,6 @@ function transform(tensors, config, ids)
     # ids are 0-based. Julia is 1-based.
     x = tensors["wte.weight"][ids .+ 1, :] + tensors["wpe.weight"][1:length(ids), :]
 
-    println("A")
-    mshow(x)
-
     for i_layer = 0:(config["n_layer"]-1)
         #### Masked Multi-Head Attention ####
 
@@ -194,41 +191,17 @@ function transform(tensors, config, ids)
             permutedims(tensors["h.$i_layer.ln_1.weight"]) .+
             permutedims(tensors["h.$i_layer.ln_1.bias"])
 
-        if i_layer == 0
-            println("B")
-            mshow(y)
-        end
-
         y =
             y * tensors["h.$i_layer.attn.c_attn.weight"] .+
             permutedims(tensors["h.$i_layer.attn.c_attn.bias"])
 
-        if i_layer == 0
-            println("C")
-            mshow(y)
-        end
-
         q, k, v = [y[:, (config["n_embd"]*(i-1)+1):(config["n_embd"]*i)] for i = 1:3]
-
-        if i_layer == 0
-            println("D")
-            mshow(q)
-            mshow(k)
-            mshow(v)
-        end
 
         size_of_head = config["n_embd"] ÷ config["n_head"]
 
         q_heads = [q[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
         k_heads = [k[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
         v_heads = [v[:, (size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
-
-        if i_layer == 0
-            println("E")
-            mshow(q_heads[1])
-            mshow(k_heads[1])
-            mshow(v_heads[1])
-        end
 
         yy = [begin
             z = (
@@ -239,17 +212,7 @@ function transform(tensors, config, ids)
             z ./ sum(z, dims = 2) * v
         end for (q, k, v) ∈ zip(q_heads, k_heads, v_heads)]
 
-        if i_layer == 0
-            println("H")
-            mshow(yy[1])
-        end
-
         yy = cat(yy..., dims = 2)
-
-        if i_layer == 0
-            println("G")
-            mshow(yy)
-        end
 
         y = cat(
             (
@@ -265,21 +228,11 @@ function transform(tensors, config, ids)
             dims = 2,
         )
 
-        if i_layer == 0
-            println("F")
-            mshow(y)
-        end
-        
         y =
             y * tensors["h.$i_layer.attn.c_proj.weight"] .+
             permutedims(tensors["h.$i_layer.attn.c_proj.bias"])
 
         x += y
-
-        if i_layer == 0
-            println("J")
-            x |> mshow
-        end
 
         #### Feed Forward ####
 
@@ -289,42 +242,17 @@ function transform(tensors, config, ids)
             permutedims(tensors["h.$i_layer.ln_2.weight"]) .+
             permutedims(tensors["h.$i_layer.ln_2.bias"])
 
-        if i_layer == 0
-            println("K")
-            y |> mshow
-        end
-
         y =
             y * tensors["h.$i_layer.mlp.c_fc.weight"] .+
             permutedims(tensors["h.$i_layer.mlp.c_fc.bias"])
 
-        if i_layer == 0
-            println("L")
-            y |> mshow
-        end
-
         y = (tanh.((y .^ 3 * 0.044715f0 + y) * √(2.0f0 / π)) .+ 1.0f0) .* y * 0.5f0
-
-        if i_layer == 0
-            println("M")
-            y |> mshow
-        end
 
         y =
             y * tensors["h.$i_layer.mlp.c_proj.weight"] .+
             permutedims(tensors["h.$i_layer.mlp.c_proj.bias"])
 
-        if i_layer == 0
-            println("N")
-            y |> mshow
-        end
-
         x += y
-
-        if i_layer == 0
-            println("O")
-            x |> mshow
-        end
     end
 
     #### Projection ####
@@ -391,17 +319,17 @@ function main()
 
     #### Inference ####
 
-    # printstyled(ARGS[2], bold = true, color = :light_black)
+    printstyled(ARGS[2], bold = true, color = :light_black)
 
     buffer = UInt8[]
     # while true
-    for _ = 1:4
+    for _ = length(ids):config["n_ctx"]
         x = transform(tensors, config, ids)
 
         # ids are 0-based. Julia is 1-based.
         next_id = argmax(x) - 1
         (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[next_id])
-        # printstyled(decoded, bold = true)
+        printstyled(decoded, bold = true)
 
         if length(ids) == config["n_ctx"]
             popfirst!(ids)

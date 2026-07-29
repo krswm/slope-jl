@@ -182,9 +182,6 @@ function transform!(tensors, config, id, pos, cached_k, cached_v)
     # ids are 0-based. Julia is 1-based.
     x = tensors["wte.weight"][id + 1, :] + tensors["wpe.weight"][pos, :]
 
-    println("A")
-    mshow(x)
-
     ε = Float32(config["layer_norm_epsilon"])
 
     for i_layer = 0:(config["n_layer"]-1)
@@ -196,28 +193,11 @@ function transform!(tensors, config, id, pos, cached_k, cached_v)
             tensors["h.$i_layer.ln_1.weight"] .+
             tensors["h.$i_layer.ln_1.bias"]
 
-        if i_layer == 0
-            println("B")
-            mshow(y)
-        end
-
         y =
             permutedims(tensors["h.$i_layer.attn.c_attn.weight"]) * y +
             tensors["h.$i_layer.attn.c_attn.bias"]
 
-        if i_layer == 0
-            println("C")
-            mshow(y)
-        end
-
         q, k, v = [y[(config["n_embd"]*(i-1)+1):(config["n_embd"]*i)] for i = 1:3]
-
-        if i_layer == 0
-            println("D")
-            mshow(q)
-            mshow(k)
-            mshow(v)
-        end
 
         size_of_head = config["n_embd"] ÷ config["n_head"]
 
@@ -225,20 +205,6 @@ function transform!(tensors, config, id, pos, cached_k, cached_v)
         k_heads = [k[(size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
         v_heads = [v[(size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
 
-        if i_layer == 0
-            println("E")
-            mshow(q_heads[1])
-            mshow(k_heads[1])
-            mshow(v_heads[1])
-        end
-
-        if i_layer == 0
-            println("I")
-            mshow(cached_k[i_layer + 1][1])
-            mshow(permutedims(k_heads[1]))
-            mshow(vcat(cached_k[i_layer + 1][1], permutedims(k_heads[1])))
-        end
-        
         # Here I'll use the KV-cache!
         k_heads_full = [vcat(cached, permutedims(head)) for (cached, head) = zip(cached_k[i_layer + 1], k_heads)]
         v_heads_full = [vcat(cached, permutedims(head)) for (cached, head) = zip(cached_v[i_layer + 1], v_heads)]
@@ -246,12 +212,6 @@ function transform!(tensors, config, id, pos, cached_k, cached_v)
 
         cached_k[i_layer + 1] = k_heads_full
         cached_v[i_layer + 1] = v_heads_full
-
-        if i_layer == 0
-            println("full")
-            mshow(k_heads_full[1])
-            mshow(v_heads_full[1])
-        end
 
         #=
         y = cat(
@@ -280,28 +240,13 @@ function transform!(tensors, config, id, pos, cached_k, cached_v)
             z ./ sum(z) * v
         end for (q, k, v) ∈ zip(q_heads, k_heads_full, v_heads_full)]
 
-        if i_layer == 0
-            println("H")
-            mshow(y[1])
-        end
-
         y = hcat(y...)
-
-        if i_layer == 0
-            println("G")
-            y |> mshow
-        end
 
         y =
             permutedims(tensors["h.$i_layer.attn.c_proj.weight"]) * vec(y) +
             tensors["h.$i_layer.attn.c_proj.bias"]
 
         x += y
-
-        if i_layer == 0
-            println("J")
-            x |> mshow
-        end
 
         #### Feed Forward ####
 
@@ -311,26 +256,11 @@ function transform!(tensors, config, id, pos, cached_k, cached_v)
             tensors["h.$i_layer.ln_2.weight"] .+
             tensors["h.$i_layer.ln_2.bias"]
 
-        if i_layer == 0
-            println("K")
-            y |> mshow
-        end
-
         y =
             permutedims(tensors["h.$i_layer.mlp.c_fc.weight"]) * y +
             tensors["h.$i_layer.mlp.c_fc.bias"]
 
-        if i_layer == 0
-            println("L")
-            y |> mshow
-        end
-
         y = (tanh.((y .^ 3 * 0.044715f0 + y) * √(2.0f0 / π)) .+ 1.0f0) .* y * 0.5f0
-
-        if i_layer == 0
-            println("M")
-            y |> mshow
-        end
 
         y =
             permutedims(tensors["h.$i_layer.mlp.c_proj.weight"]) * y +
@@ -338,10 +268,6 @@ function transform!(tensors, config, id, pos, cached_k, cached_v)
 
         x += y
 
-        if i_layer == 0
-            println("O")
-            x |> mshow
-        end
     end
 
     #### Projection ####
@@ -405,7 +331,7 @@ function main()
 
     #### Inference ####
 
-    # printstyled(ARGS[2], bold = true, color = :light_black)
+    printstyled(ARGS[2], bold = true, color = :light_black)
 
     size_of_head = config["n_embd"] ÷ config["n_head"]
 
@@ -417,21 +343,23 @@ function main()
     x = undef
 
     for id = ids
-        printstyled("$pos\n", reverse=true)
         x = transform!(tensors, config, id, pos, cached_k, cached_v)
         pos += 1
     end
 
-    next_id = argmax(x) - 1
-
     buffer = UInt8[]
-    while pos < length(ids) + 3
+
+    next_id = argmax(x) - 1
+    (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[next_id])
+    printstyled(decoded, bold = true)
+
+    while pos ≤ config["n_ctx"]
         x = transform!(tensors, config, next_id, pos, cached_k, cached_v)
 
         # ids are 0-based. Julia is 1-based.
         next_id = argmax(x) - 1
         (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[next_id])
-        # printstyled(decoded, bold = true)
+        printstyled(decoded, bold = true)
 
         pos += 1
 
@@ -445,3 +373,6 @@ function main()
 end
 
 main()
+
+# KV Cache done!
+# faster!
