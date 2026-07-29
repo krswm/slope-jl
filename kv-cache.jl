@@ -170,28 +170,26 @@ end
 
 #### Transformer ####
 
-function mshow(matrix) 
+function mshow(matrix)
     show(IOContext(stdout, :limit => true), "text/plain", matrix)
     println()
 end
 
 # The transformer for the GPT-2 architecture.
 function transform!(tensors, config, id, pos, cached_k, cached_v)
+    ε = Float32(config["layer_norm_epsilon"])
+
     #### Embedding ####
 
     # ids are 0-based. Julia is 1-based.
-    x = tensors["wte.weight"][id + 1, :] + tensors["wpe.weight"][pos, :]
-
-    ε = Float32(config["layer_norm_epsilon"])
+    x = tensors["wte.weight"][id+1, :] + tensors["wpe.weight"][pos, :]
 
     for i_layer = 0:(config["n_layer"]-1)
         #### Masked Multi-Head Attention ####
 
         y =
-            (x .- mean(x)) ./
-            √(var(x, corrected = false) + ε) .*
-            tensors["h.$i_layer.ln_1.weight"] .+
-            tensors["h.$i_layer.ln_1.bias"]
+            (x .- mean(x)) ./ √(var(x, corrected = false) + ε) .*
+            tensors["h.$i_layer.ln_1.weight"] + tensors["h.$i_layer.ln_1.bias"]
 
         y =
             permutedims(tensors["h.$i_layer.attn.c_attn.weight"]) * y +
@@ -205,45 +203,30 @@ function transform!(tensors, config, id, pos, cached_k, cached_v)
         k_heads = [k[(size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
         v_heads = [v[(size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
 
-        # Here I'll use the KV-cache!
-        k_heads_full = [vcat(cached, permutedims(head)) for (cached, head) = zip(cached_k[i_layer + 1], k_heads)]
-        v_heads_full = [vcat(cached, permutedims(head)) for (cached, head) = zip(cached_v[i_layer + 1], v_heads)]
-        # TODO: Can I use broadcasting `.` here?
+        k_heads_full = [
+            hcat(cached, head) for
+            (cached, head) in zip(cached_k[i_layer+1], k_heads)
+        ]
+        v_heads_full = [
+            hcat(cached, head) for
+            (cached, head) in zip(cached_v[i_layer+1], v_heads)
+        ]
 
-        cached_k[i_layer + 1] = k_heads_full
-        cached_v[i_layer + 1] = v_heads_full
+        cached_k[i_layer+1] = k_heads_full
+        cached_v[i_layer+1] = v_heads_full
 
-        #=
-        y = cat(
-            (
-                begin
-                    z = (
-                        tril(q * transpose(k) ./ √Float32(pos)) +
-                        triu(fill(-Inf32, (length(q), length(q))), 1)
-                    )
-                    z = exp.(z .- maximum(z))
-                    z ./ sum(z) * v
-                end for (q, k, v) ∈ zip(q_heads, k_heads, v_heads)
-            )...,
-            dims = 1
-        )
-        =#
+        y = [
+            begin
+                z = (permutedims(k) * q ./ √Float32(length(q)))
+                z = exp.(z .- maximum(z))
+                v * z ./ sum(z)
+            end for (q, k, v) ∈ zip(q_heads, k_heads_full, v_heads_full)
+        ]
 
-        # I haven't realized until now that
-        # I don't need the causal mask anymore
-        # if I use the KV cache!!!
-        y = [begin
-            z = (
-                permutedims(q) * transpose(k) ./ √Float32(length(q))
-            )
-            z = exp.(z .- maximum(z))
-            z ./ sum(z) * v
-        end for (q, k, v) ∈ zip(q_heads, k_heads_full, v_heads_full)]
-
-        y = hcat(y...)
+        y = vcat(y...)
 
         y =
-            permutedims(tensors["h.$i_layer.attn.c_proj.weight"]) * vec(y) +
+            permutedims(tensors["h.$i_layer.attn.c_proj.weight"]) * y +
             tensors["h.$i_layer.attn.c_proj.bias"]
 
         x += y
@@ -251,10 +234,8 @@ function transform!(tensors, config, id, pos, cached_k, cached_v)
         #### Feed Forward ####
 
         y =
-            (x .- mean(x)) ./
-            √(var(x, corrected = false) + ε) .*
-            tensors["h.$i_layer.ln_2.weight"] .+
-            tensors["h.$i_layer.ln_2.bias"]
+            (x .- mean(x)) ./ √(var(x, corrected = false) + ε) .*
+            tensors["h.$i_layer.ln_2.weight"] + tensors["h.$i_layer.ln_2.bias"]
 
         y =
             permutedims(tensors["h.$i_layer.mlp.c_fc.weight"]) * y +
@@ -267,14 +248,12 @@ function transform!(tensors, config, id, pos, cached_k, cached_v)
             tensors["h.$i_layer.mlp.c_proj.bias"]
 
         x += y
-
     end
 
     #### Projection ####
 
     x =
-        (x .- mean(x)) ./ .√(var(x, corrected = false) + ε) .* tensors["ln_f.weight"] +
-        tensors["ln_f.bias"]
+        (x .- mean(x)) ./ .√(var(x, corrected = false) + ε) .* tensors["ln_f.weight"] + tensors["ln_f.bias"]
 
     tensors["wte.weight"] * x
 end
@@ -331,48 +310,32 @@ function main()
 
     #### Inference ####
 
-    printstyled(ARGS[2], bold = true, color = :light_black)
-
     size_of_head = config["n_embd"] ÷ config["n_head"]
 
-    cached_k = [[Array{Float32}(undef, 0, size_of_head) for _ = 1:config["n_head"]] for _ = 1:config["n_layer"]]
-    cached_v = [[Array{Float32}(undef, 0, size_of_head) for _ = 1:config["n_head"]] for _ = 1:config["n_layer"]]
-
-    pos = 1
-
-    x = undef
-
-    for id = ids
-        x = transform!(tensors, config, id, pos, cached_k, cached_v)
-        pos += 1
-    end
+    cached_k = [
+        [Array{Float32}(undef, size_of_head, 0) for _ = 1:config["n_head"]] for
+        _ = 1:config["n_layer"]
+    ]
+    cached_v = [
+        [Array{Float32}(undef, size_of_head, 0) for _ = 1:config["n_head"]] for
+        _ = 1:config["n_layer"]
+    ]
 
     buffer = UInt8[]
-
-    next_id = argmax(x) - 1
-    (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[next_id])
-    printstyled(decoded, bold = true)
-
-    while pos ≤ config["n_ctx"]
-        x = transform!(tensors, config, next_id, pos, cached_k, cached_v)
-
-        # ids are 0-based. Julia is 1-based.
-        next_id = argmax(x) - 1
-        (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[next_id])
+    for (pos, id) in enumerate(ids[1:(end-1)])
+        (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[id])
+        printstyled(decoded, bold = true, color = :light_black)
+        transform!(tensors, config, id, pos, cached_k, cached_v)
+    end
+    id = ids[end]
+    (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[id])
+    printstyled(decoded, bold = true, color = :light_black)
+    for pos = (length(ids)+1):config["n_ctx"]
+        logits = transform!(tensors, config, id, pos, cached_k, cached_v)
+        id = argmax(logits) - 1
+        (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[id])
         printstyled(decoded, bold = true)
-
-        pos += 1
-
-        #=
-        if length(ids) == config["n_ctx"]
-            popfirst!(ids)
-        end
-        push!(ids, next_id)
-        =#
     end
 end
 
 main()
-
-# KV Cache done!
-# faster!
