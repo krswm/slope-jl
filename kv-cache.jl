@@ -177,23 +177,19 @@ end
 
 # The transformer for the GPT-2 architecture.
 function transform!(tensors, config, model, id, pos, cached_k, cached_v)
-    ε = Float32(config["layer_norm_epsilon"])
-
     #### Embedding ####
 
     # ids are 0-based. Julia is 1-based.
     x = model.wte[:, id+1] + model.wpe[:, pos]
 
-    for (i_layer, layer) in zip(0:(model.n_layer-1), model.layers)
+    for (i_layer, (layer, ck, cv)) ∈ enumerate(zip(model.layers, cached_k, cached_v))
         #### Masked Multi-Head Attention ####
 
         y =
             (x .- mean(x)) ./ √(var(x, corrected = false) + model.ln_ε) .* layer.ln_1_γ .+
             layer.ln_1_β
 
-        y =
-            permutedims(tensors["h.$i_layer.attn.c_attn.weight"]) * y +
-            tensors["h.$i_layer.attn.c_attn.bias"]
+        y = layer.attn_c_attn_w * y + layer.attn_c_attn_b
 
         q, k, v = [y[(config["n_embd"]*(i-1)+1):(config["n_embd"]*i)] for i = 1:3]
 
@@ -203,13 +199,11 @@ function transform!(tensors, config, model, id, pos, cached_k, cached_v)
         k_heads = [k[(size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
         v_heads = [v[(size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
 
-        k_heads_full =
-            [hcat(cached, head) for (cached, head) in zip(cached_k[i_layer+1], k_heads)]
-        v_heads_full =
-            [hcat(cached, head) for (cached, head) in zip(cached_v[i_layer+1], v_heads)]
+        k_heads_full = [hcat(cached, head) for (cached, head) in zip(ck, k_heads)]
+        v_heads_full = [hcat(cached, head) for (cached, head) in zip(cv, v_heads)]
 
-        cached_k[i_layer+1] = k_heads_full
-        cached_v[i_layer+1] = v_heads_full
+        cached_k[i_layer] = k_heads_full
+        cached_v[i_layer] = v_heads_full
 
         y = [
             begin
@@ -221,34 +215,29 @@ function transform!(tensors, config, model, id, pos, cached_k, cached_v)
 
         y = vcat(y...)
 
-        y =
-            permutedims(tensors["h.$i_layer.attn.c_proj.weight"]) * y +
-            tensors["h.$i_layer.attn.c_proj.bias"]
+        y = layer.attn_c_proj_w * y + layer.attn_c_proj_b
 
         x += y
 
         #### Feed Forward ####
 
         y =
-            (x .- mean(x)) ./ √(var(x, corrected = false) + model.ln_ε) .*
-            tensors["h.$i_layer.ln_2.weight"] + tensors["h.$i_layer.ln_2.bias"]
+            (x .- mean(x)) ./ √(var(x, corrected = false) + model.ln_ε) .* layer.ln_2_γ .+
+            layer.ln_2_β
 
-        y =
-            permutedims(tensors["h.$i_layer.mlp.c_fc.weight"]) * y +
-            tensors["h.$i_layer.mlp.c_fc.bias"]
+        y = layer.mlp_c_fc_w * y + layer.mlp_c_fc_b
 
         y = (tanh.((y .^ 3 * 0.044715f0 + y) * √(2.0f0 / π)) .+ 1.0f0) .* y * 0.5f0
 
-        y =
-            permutedims(tensors["h.$i_layer.mlp.c_proj.weight"]) * y +
-            tensors["h.$i_layer.mlp.c_proj.bias"]
+        y = layer.mlp_c_proj_w * y + layer.mlp_c_proj_b
 
         x += y
     end
 
     #### Projection ####
 
-    x = (x .- mean(x)) ./ .√(var(x, corrected = false) + model.ln_ε) .* model.ln_f_γ + model.ln_f_β
+    x =
+        (x .- mean(x)) ./ .√(var(x, corrected = false) + model.ln_ε) .* model.ln_f_γ + model.ln_f_β
 
     model.wte' * x
 end
@@ -256,8 +245,18 @@ end
 #### Main ####
 
 struct Layer
-    ln_1_γ::Any
-    ln_1_β::Any
+    ln_1_γ::Array{Float32,1}
+    ln_1_β::Array{Float32,1}
+    attn_c_attn_w::Array{Float32,2}
+    attn_c_attn_b::Array{Float32,1}
+    attn_c_proj_w::Array{Float32,2}
+    attn_c_proj_b::Array{Float32,1}
+    mlp_c_fc_w::Array{Float32,2}
+    mlp_c_fc_b::Array{Float32,1}
+    mlp_c_proj_w::Array{Float32,2}
+    mlp_c_proj_b::Array{Float32,1}
+    ln_2_γ::Array{Float32,1}
+    ln_2_β::Array{Float32,1}
 end
 
 struct Model
@@ -269,7 +268,7 @@ struct Model
     vocab_size::Int
     wte::Array{Float32,2}
     wpe::Array{Float32,2}
-    layers::Any
+    layers::Array{Layer}
     ln_f_γ::Array{Float32,1}
     ln_f_β::Array{Float32,1}
 end
@@ -282,33 +281,78 @@ function get_model(tensors, config)
     n_layer = config["n_layer"]
     vocab_size = config["vocab_size"]
 
-    wte = permutedims(tensors["wte.weight"])
-    if size(wte) ≠ (n_embd, vocab_size)
-        error("tensor has unexpected size")
+    function validate_size(tensor, expected)
+        if size(tensor) ≠ expected
+            error("size of tensor $(size(tensor)) differs from expected $expected")
+        end
     end
 
+    wte = permutedims(tensors["wte.weight"])
+    validate_size(wte, (n_embd, vocab_size))
+
     wpe = permutedims(tensors["wpe.weight"])
-    if size(wpe) ≠ (n_embd, n_ctx)
-        error("tensor has unexpected size")
-    end
+    validate_size(wpe, (n_embd, n_ctx))
 
     layers = Layer[]
     for i = 0:(n_layer-1)
         ln_1_γ = tensors["h.$i.ln_1.weight"]
+        validate_size(ln_1_γ, (n_embd,))
+
         ln_1_β = tensors["h.$i.ln_1.bias"]
-        layer = Layer(ln_1_γ, ln_1_β)
+        validate_size(ln_1_β, (n_embd,))
+
+        attn_c_attn_w = permutedims(tensors["h.$i.attn.c_attn.weight"])
+        validate_size(attn_c_attn_w, (n_embd * 3, n_embd))
+
+        attn_c_attn_b = tensors["h.$i.attn.c_attn.bias"]
+        validate_size(attn_c_attn_b, (n_embd * 3,))
+
+        attn_c_proj_w = permutedims(tensors["h.$i.attn.c_proj.weight"])
+        validate_size(attn_c_proj_w, (n_embd, n_embd))
+
+        attn_c_proj_b = tensors["h.$i.attn.c_proj.bias"]
+        validate_size(attn_c_proj_b, (n_embd,))
+
+        mlp_c_fc_w = permutedims(tensors["h.$i.mlp.c_fc.weight"])
+        validate_size(mlp_c_fc_w, (n_embd * 4, n_embd))
+
+        mlp_c_fc_b = tensors["h.$i.mlp.c_fc.bias"]
+        validate_size(mlp_c_fc_b, (n_embd * 4,))
+
+        mlp_c_proj_w = permutedims(tensors["h.$i.mlp.c_proj.weight"])
+        validate_size(mlp_c_proj_w, (n_embd, n_embd * 4))
+
+        mlp_c_proj_b = tensors["h.$i.mlp.c_proj.bias"]
+        validate_size(mlp_c_proj_b, (n_embd,))
+
+        ln_2_γ = tensors["h.$i.ln_2.weight"]
+        validate_size(ln_2_γ, (n_embd,))
+
+        ln_2_β = tensors["h.$i.ln_2.bias"]
+        validate_size(ln_2_β, (n_embd,))
+
+        layer = Layer(
+            ln_1_γ,
+            ln_1_β,
+            attn_c_attn_w,
+            attn_c_attn_b,
+            attn_c_proj_w,
+            attn_c_proj_b,
+            mlp_c_fc_w,
+            mlp_c_fc_b,
+            mlp_c_proj_w,
+            mlp_c_proj_b,
+            ln_2_γ,
+            ln_2_β,
+        )
         push!(layers, layer)
     end
 
     ln_f_γ = tensors["ln_f.weight"]
-    if size(ln_f_γ) ≠ (n_embd,)
-        error("tensor has unexpected size")
-    end
+    validate_size(ln_f_γ, (n_embd,))
 
     ln_f_β = tensors["ln_f.bias"]
-    if size(ln_f_β) ≠ (n_embd,)
-        error("tensor has unexpected size")
-    end
+    validate_size(ln_f_β, (n_embd,))
 
     Model(ε, n_ctx, n_embd, n_head, n_layer, vocab_size, wte, wpe, layers, ln_f_γ, ln_f_β)
 end

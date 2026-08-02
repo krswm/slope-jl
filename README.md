@@ -14,6 +14,12 @@ I need this optimization before going to kv cache implementation.
 
 I verified in kv-cache.jl and confirmed all QKV is same except for the last row.
 
+### 2026-08-02
+
+Inference becomes SO fast!!!
+
+I may need to quantitatively measure the speed later (tokens per second).
+
 # GPT-2 Inference with Julia
 
 I built a GPT-2 inference engine from scratch in Julia.
