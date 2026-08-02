@@ -184,12 +184,12 @@ function transform!(tensors, config, model, id, pos, cached_k, cached_v)
     # ids are 0-based. Julia is 1-based.
     x = model.wte[:, id+1] + model.wpe[:, pos]
 
-    for i_layer = 0:(model.n_layer - 1)
+    for (i_layer, layer) in zip(0:(model.n_layer-1), model.layers)
         #### Masked Multi-Head Attention ####
 
         y =
-            (x .- mean(x)) ./ √(var(x, corrected = false) + ε) .*
-            tensors["h.$i_layer.ln_1.weight"] + tensors["h.$i_layer.ln_1.bias"]
+            (x .- mean(x)) ./ √(var(x, corrected = false) + model.ln_ε) .* layer.ln_1_γ .+
+            layer.ln_1_β
 
         y =
             permutedims(tensors["h.$i_layer.attn.c_attn.weight"]) * y +
@@ -230,7 +230,7 @@ function transform!(tensors, config, model, id, pos, cached_k, cached_v)
         #### Feed Forward ####
 
         y =
-            (x .- mean(x)) ./ √(var(x, corrected = false) + ε) .*
+            (x .- mean(x)) ./ √(var(x, corrected = false) + model.ln_ε) .*
             tensors["h.$i_layer.ln_2.weight"] + tensors["h.$i_layer.ln_2.bias"]
 
         y =
@@ -248,24 +248,30 @@ function transform!(tensors, config, model, id, pos, cached_k, cached_v)
 
     #### Projection ####
 
-    x =
-        (x .- mean(x)) ./ .√(var(x, corrected = false) + ε) .* tensors["ln_f.weight"] + tensors["ln_f.bias"]
+    x = (x .- mean(x)) ./ .√(var(x, corrected = false) + model.ln_ε) .* model.ln_f_γ + model.ln_f_β
 
-    model.wte_transposed * x
+    model.wte' * x
 end
 
 #### Main ####
 
+struct Layer
+    ln_1_γ::Any
+    ln_1_β::Any
+end
+
 struct Model
-    ε::Float32
+    ln_ε::Float32
     n_ctx::Int
     n_embd::Int
     n_head::Int
     n_layer::Int
     vocab_size::Int
-    wte::Array{Float32, 2}
-    wte_transposed::Array{Float32, 2}
-    wpe::Array{Float32, 2}
+    wte::Array{Float32,2}
+    wpe::Array{Float32,2}
+    layers::Any
+    ln_f_γ::Array{Float32,1}
+    ln_f_β::Array{Float32,1}
 end
 
 function get_model(tensors, config)
@@ -281,26 +287,30 @@ function get_model(tensors, config)
         error("tensor has unexpected size")
     end
 
-    wte_transposed = wte'
-
     wpe = permutedims(tensors["wpe.weight"])
     if size(wpe) ≠ (n_embd, n_ctx)
         error("tensor has unexpected size")
     end
 
-    ln_1_γ = [tensors["h.$i.ln_1.weight"] for i = 0:(n_layer - 1)]
-    println(size.(ln_1_γ))
-    
-    if any(size.(ln_1_γ) .≠ (n_embd,))
-        error("tensor has unexpected size")
+    layers = Layer[]
+    for i = 0:(n_layer-1)
+        ln_1_γ = tensors["h.$i.ln_1.weight"]
+        ln_1_β = tensors["h.$i.ln_1.bias"]
+        layer = Layer(ln_1_γ, ln_1_β)
+        push!(layers, layer)
     end
-    
-    ln_1_β = [tensors["h.$i.ln_1.bias"] for i = 0:(n_layer - 1)]
-    if any(size.(ln_1_β) .≠ (n_embd,))
+
+    ln_f_γ = tensors["ln_f.weight"]
+    if size(ln_f_γ) ≠ (n_embd,)
         error("tensor has unexpected size")
     end
 
-    Model(ε, n_ctx, n_embd, n_head, n_layer, vocab_size, wte, wpe, wte_transposed)
+    ln_f_β = tensors["ln_f.bias"]
+    if size(ln_f_β) ≠ (n_embd,)
+        error("tensor has unexpected size")
+    end
+
+    Model(ε, n_ctx, n_embd, n_head, n_layer, vocab_size, wte, wpe, layers, ln_f_γ, ln_f_β)
 end
 
 function main()
