@@ -170,74 +170,61 @@ end
 
 #### Transformer ####
 
-function mshow(matrix)
-    show(IOContext(stdout, :limit => true), "text/plain", matrix)
-    println()
-end
+# The paper that introduced layer norm uses uncorrelated variance.
+# https://arxiv.org/abs/1607.06450
+layer_norm(x, g, t, e) = (x .- mean(x)) ./ √(var(x, corrected = false) + e) .* g .+ t
 
 # The transformer for the GPT-2 architecture.
-function transform!(tensors, config, model, id, pos, cached_k, cached_v)
+function transform!(k_caches, v_caches, model, id, pos)
     #### Embedding ####
 
     # ids are 0-based. Julia is 1-based.
     x = model.wte[:, id+1] + model.wpe[:, pos]
 
-    for (i_layer, (layer, ck, cv)) ∈ enumerate(zip(model.layers, cached_k, cached_v))
+    for (layer, k_cache, v_cache) ∈ zip(model.layers, k_caches, v_caches)
         #### Masked Multi-Head Attention ####
 
-        y =
-            (x .- mean(x)) ./ √(var(x, corrected = false) + model.ln_ε) .* layer.ln_1_γ .+
-            layer.ln_1_β
+        y = layer_norm(x, layer.g1, layer.t1, model.e)
 
-        y = layer.attn_c_attn_w * y + layer.attn_c_attn_b
+        y = layer.w11 * y + layer.b11
 
-        q, k, v = [y[(config["n_embd"]*(i-1)+1):(config["n_embd"]*i)] for i = 1:3]
+        q_heads, k_heads, v_heads = (
+            Iterators.partition(chunk, model.head_size) for
+            chunk ∈ Iterators.partition(y, model.n_embd)
+        )
 
-        size_of_head = config["n_embd"] ÷ config["n_head"]
+        k_cache[:] = [hcat(cache, head) for (cache, head) in zip(k_cache, k_heads)]
+        v_cache[:] = [hcat(cache, head) for (cache, head) in zip(v_cache, v_heads)]
 
-        q_heads = [q[(size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
-        k_heads = [k[(size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
-        v_heads = [v[(size_of_head*(i-1)+1):(size_of_head*i)] for i = 1:config["n_head"]]
-
-        k_heads_full = [hcat(cached, head) for (cached, head) in zip(ck, k_heads)]
-        v_heads_full = [hcat(cached, head) for (cached, head) in zip(cv, v_heads)]
-
-        cached_k[i_layer] = k_heads_full
-        cached_v[i_layer] = v_heads_full
-
-        y = [
+        y = (
             begin
-                z = (permutedims(k) * q ./ √Float32(length(q)))
+                z = k' * q ./ √Float32(model.head_size)
                 z = exp.(z .- maximum(z))
                 v * z ./ sum(z)
-            end for (q, k, v) ∈ zip(q_heads, k_heads_full, v_heads_full)
-        ]
-
+            end for (q, k, v) ∈ zip(q_heads, k_cache, v_cache)
+        )
         y = vcat(y...)
 
-        y = layer.attn_c_proj_w * y + layer.attn_c_proj_b
+        y = layer.w12 * y + layer.b12
 
         x += y
 
         #### Feed Forward ####
 
-        y =
-            (x .- mean(x)) ./ √(var(x, corrected = false) + model.ln_ε) .* layer.ln_2_γ .+
-            layer.ln_2_β
+        y = layer_norm(x, layer.g2, layer.t2, model.e)
 
-        y = layer.mlp_c_fc_w * y + layer.mlp_c_fc_b
+        y = layer.w21 * y + layer.b21
 
         y = (tanh.((y .^ 3 * 0.044715f0 + y) * √(2.0f0 / π)) .+ 1.0f0) .* y * 0.5f0
 
-        y = layer.mlp_c_proj_w * y + layer.mlp_c_proj_b
+        y = layer.w22 * y + layer.b22
 
         x += y
     end
 
     #### Projection ####
 
-    x =
-        (x .- mean(x)) ./ .√(var(x, corrected = false) + model.ln_ε) .* model.ln_f_γ + model.ln_f_β
+    x = layer_norm(x, model.gf, model.tf, model.e)
 
     model.wte' * x
 end
@@ -245,41 +232,43 @@ end
 #### Main ####
 
 struct Layer
-    ln_1_γ::Array{Float32,1}
-    ln_1_β::Array{Float32,1}
-    attn_c_attn_w::Array{Float32,2}
-    attn_c_attn_b::Array{Float32,1}
-    attn_c_proj_w::Array{Float32,2}
-    attn_c_proj_b::Array{Float32,1}
-    mlp_c_fc_w::Array{Float32,2}
-    mlp_c_fc_b::Array{Float32,1}
-    mlp_c_proj_w::Array{Float32,2}
-    mlp_c_proj_b::Array{Float32,1}
-    ln_2_γ::Array{Float32,1}
-    ln_2_β::Array{Float32,1}
+    g1::Array{Float32,1}
+    t1::Array{Float32,1}
+    w11::Array{Float32,2}
+    b11::Array{Float32,1}
+    w12::Array{Float32,2}
+    b12::Array{Float32,1}
+    g2::Array{Float32,1}
+    t2::Array{Float32,1}
+    w21::Array{Float32,2}
+    b21::Array{Float32,1}
+    w22::Array{Float32,2}
+    b22::Array{Float32,1}
 end
 
 struct Model
-    ln_ε::Float32
     n_ctx::Int
     n_embd::Int
     n_head::Int
     n_layer::Int
     vocab_size::Int
+    head_size::Int
+    e::Float32
     wte::Array{Float32,2}
     wpe::Array{Float32,2}
     layers::Array{Layer}
-    ln_f_γ::Array{Float32,1}
-    ln_f_β::Array{Float32,1}
+    gf::Array{Float32,1}
+    tf::Array{Float32,1}
 end
 
 function get_model(tensors, config)
-    ε = Float32(config["layer_norm_epsilon"])
     n_ctx = config["n_ctx"]
     n_embd = config["n_embd"]
     n_head = config["n_head"]
     n_layer = config["n_layer"]
     vocab_size = config["vocab_size"]
+    head_size = n_embd ÷ n_head
+    e = Float32(config["layer_norm_epsilon"])
 
     function validate_size(tensor, expected)
         if size(tensor) ≠ expected
@@ -295,66 +284,66 @@ function get_model(tensors, config)
 
     layers = Layer[]
     for i = 0:(n_layer-1)
-        ln_1_γ = tensors["h.$i.ln_1.weight"]
-        validate_size(ln_1_γ, (n_embd,))
+        g1 = tensors["h.$i.ln_1.weight"]
+        validate_size(g1, (n_embd,))
 
-        ln_1_β = tensors["h.$i.ln_1.bias"]
-        validate_size(ln_1_β, (n_embd,))
+        t1 = tensors["h.$i.ln_1.bias"]
+        validate_size(t1, (n_embd,))
 
-        attn_c_attn_w = permutedims(tensors["h.$i.attn.c_attn.weight"])
-        validate_size(attn_c_attn_w, (n_embd * 3, n_embd))
+        w11 = permutedims(tensors["h.$i.attn.c_attn.weight"])
+        validate_size(w11, (n_embd * 3, n_embd))
 
-        attn_c_attn_b = tensors["h.$i.attn.c_attn.bias"]
-        validate_size(attn_c_attn_b, (n_embd * 3,))
+        b11 = tensors["h.$i.attn.c_attn.bias"]
+        validate_size(b11, (n_embd * 3,))
 
-        attn_c_proj_w = permutedims(tensors["h.$i.attn.c_proj.weight"])
-        validate_size(attn_c_proj_w, (n_embd, n_embd))
+        w12 = permutedims(tensors["h.$i.attn.c_proj.weight"])
+        validate_size(w12, (n_embd, n_embd))
 
-        attn_c_proj_b = tensors["h.$i.attn.c_proj.bias"]
-        validate_size(attn_c_proj_b, (n_embd,))
+        b12 = tensors["h.$i.attn.c_proj.bias"]
+        validate_size(b12, (n_embd,))
 
-        mlp_c_fc_w = permutedims(tensors["h.$i.mlp.c_fc.weight"])
-        validate_size(mlp_c_fc_w, (n_embd * 4, n_embd))
+        g2 = tensors["h.$i.ln_2.weight"]
+        validate_size(g2, (n_embd,))
 
-        mlp_c_fc_b = tensors["h.$i.mlp.c_fc.bias"]
-        validate_size(mlp_c_fc_b, (n_embd * 4,))
+        t2 = tensors["h.$i.ln_2.bias"]
+        validate_size(t2, (n_embd,))
 
-        mlp_c_proj_w = permutedims(tensors["h.$i.mlp.c_proj.weight"])
-        validate_size(mlp_c_proj_w, (n_embd, n_embd * 4))
+        w21 = permutedims(tensors["h.$i.mlp.c_fc.weight"])
+        validate_size(w21, (n_embd * 4, n_embd))
 
-        mlp_c_proj_b = tensors["h.$i.mlp.c_proj.bias"]
-        validate_size(mlp_c_proj_b, (n_embd,))
+        b21 = tensors["h.$i.mlp.c_fc.bias"]
+        validate_size(b21, (n_embd * 4,))
 
-        ln_2_γ = tensors["h.$i.ln_2.weight"]
-        validate_size(ln_2_γ, (n_embd,))
+        w22 = permutedims(tensors["h.$i.mlp.c_proj.weight"])
+        validate_size(w22, (n_embd, n_embd * 4))
 
-        ln_2_β = tensors["h.$i.ln_2.bias"]
-        validate_size(ln_2_β, (n_embd,))
+        b22 = tensors["h.$i.mlp.c_proj.bias"]
+        validate_size(b22, (n_embd,))
 
-        layer = Layer(
-            ln_1_γ,
-            ln_1_β,
-            attn_c_attn_w,
-            attn_c_attn_b,
-            attn_c_proj_w,
-            attn_c_proj_b,
-            mlp_c_fc_w,
-            mlp_c_fc_b,
-            mlp_c_proj_w,
-            mlp_c_proj_b,
-            ln_2_γ,
-            ln_2_β,
-        )
+        layer = Layer(g1, t1, w11, b11, w12, b12, g2, t2, w21, b21, w22, b22)
         push!(layers, layer)
     end
 
-    ln_f_γ = tensors["ln_f.weight"]
-    validate_size(ln_f_γ, (n_embd,))
+    gf = tensors["ln_f.weight"]
+    validate_size(gf, (n_embd,))
 
-    ln_f_β = tensors["ln_f.bias"]
-    validate_size(ln_f_β, (n_embd,))
+    tf = tensors["ln_f.bias"]
+    validate_size(tf, (n_embd,))
 
-    Model(ε, n_ctx, n_embd, n_head, n_layer, vocab_size, wte, wpe, layers, ln_f_γ, ln_f_β)
+    Model(
+        n_ctx,
+        n_embd,
+        n_head,
+        n_layer,
+        vocab_size,
+        head_size,
+        e,
+        wte,
+        wpe,
+        layers,
+        gf,
+        tf,
+    )
 end
 
 function main()
@@ -409,14 +398,12 @@ function main()
 
     model = get_model(tensors, config)
 
-    size_of_head = config["n_embd"] ÷ config["n_head"]
-
-    cached_k = [
-        [Array{Float32}(undef, size_of_head, 0) for _ = 1:config["n_head"]] for
+    k_caches = [
+        [Array{Float32}(undef, model.head_size, 0) for _ = 1:model.n_head] for
         _ = 1:config["n_layer"]
     ]
-    cached_v = [
-        [Array{Float32}(undef, size_of_head, 0) for _ = 1:config["n_head"]] for
+    v_caches = [
+        [Array{Float32}(undef, model.head_size, 0) for _ = 1:model.n_head] for
         _ = 1:config["n_layer"]
     ]
 
@@ -424,13 +411,13 @@ function main()
     for (pos, id) in enumerate(ids[1:(end-1)])
         (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[id])
         printstyled(decoded, bold = true, color = :light_black)
-        transform!(tensors, config, model, id, pos, cached_k, cached_v)
+        transform!(k_caches, v_caches, model, id, pos)
     end
     id = ids[end]
     (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[id])
     printstyled(decoded, bold = true, color = :light_black)
     for pos = (length(ids)+1):config["n_ctx"]
-        logits = transform!(tensors, config, model, id, pos, cached_k, cached_v)
+        logits = transform!(k_caches, v_caches, model, id, pos)
         id = argmax(logits) - 1
         (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[id])
         printstyled(decoded, bold = true)
