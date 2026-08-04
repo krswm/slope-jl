@@ -53,8 +53,12 @@ function main()
         ranks
     end
 
-    token_to_id = JSON.parsefile("$(ARGS[1])/vocab.json")
-    id_to_token = Dict(id => token for (token, id) ∈ token_to_id)
+    token_to_id, id_to_token = begin
+        vocab = JSON.parsefile("$(ARGS[1])/vocab.json")
+        token_to_id = Dict(token => id for (token, id) ∈ vocab)
+        id_to_token = Dict(id => token for (token, id) ∈ vocab)
+        token_to_id, id_to_token
+    end
 
     #### Tokenization ####
 
@@ -86,17 +90,17 @@ function main()
 
     buffer = UInt8[]
     for (pos, id) in enumerate(ids[1:(end-1)])
-        (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[id])
+        decoded = decode_unique_encoding!(buffer, id_to_token[id])
         printstyled(decoded, bold = true, color = :light_black)
         transform!(k_caches, v_caches, model, id, pos)
     end
     id = ids[end]
-    (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[id])
+    decoded = decode_unique_encoding!(buffer, id_to_token[id])
     printstyled(decoded, bold = true, color = :light_black)
     for pos = (length(ids)+1):config["n_ctx"]
         logits = transform!(k_caches, v_caches, model, id, pos)
         id = argmax(logits) - 1
-        (buffer, decoded) = decode_unique_encoding(buffer, id_to_token[id])
+        decoded = decode_unique_encoding!(buffer, id_to_token[id])
         printstyled(decoded, bold = true)
     end
 end

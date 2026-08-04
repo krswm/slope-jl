@@ -14,69 +14,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# Tokenize an input with the BPE algorithm.
-function tokenize(token_to_id, ranks, input)
-    raw_tokens = String[]
-    for (i_line, line) ∈ enumerate(split(input, "\n"))
-        if i_line ≥ 2
-            push!(raw_tokens, "\n")
-        end
-
-        for (i_word, word) in enumerate(split(line, " "))
-            if i_word == 1 && word ≠ ""
-                push!(raw_tokens, word)
-            elseif i_word ≥ 2
-                push!(raw_tokens, " $word")
-            end
-        end
-    end
-
-    tokens = [encode_unique_encoding(raw_token) for raw_token ∈ raw_tokens]
-
-    # Token IDs
-    ids = []
-    for token ∈ tokens
-        if haskey(token_to_id, token)
-            push!(ids, token_to_id[token])
-        else
-            #### Merge ####
-
-            symbols = string.(collect(token))
-
-            while length(symbols) ≥ 2
-                pairs = [
-                    (token0, token1) for
-                    (token0, token1) ∈ zip(symbols[1:(end-1)], symbols[2:end])
-                ]
-
-                best_rank = typemax(Int)
-                best_i_pair = 0
-                for (i_pair, pair) ∈ enumerate(pairs)
-                    if haskey(ranks, pair) && ranks[pair] < best_rank
-                        best_rank = ranks[pair]
-                        best_i_pair = i_pair
-                    end
-                end
-                if best_i_pair == 0
-                    break
-                end
-
-                symbols[best_i_pair] *= symbols[best_i_pair+1]
-                deleteat!(symbols, best_i_pair + 1)
-            end
-
-            for symbol in symbols
-                push!(ids, token_to_id[symbol])
-            end
-        end
-    end
-    ids
-end
-
 # GPT-2 has a unique encoding.
 # e.g.: 'Ġ' (U+0120) → 0x20
 
-function encode_unique_encoding(text)
+function encode_unique_encoding(text::String)::String
     encoded = [
         if byte ∈ 0x00:0x20
             UInt32(byte + 0x0100)
@@ -95,7 +36,7 @@ function encode_unique_encoding(text)
     transcode(String, encoded)
 end
 
-function decode_unique_encoding(buffer, encoded)
+function decode_unique_encoding!(buffer::Array{UInt8}, encoded::String)::String
     bytes = [
         if codepoint ∈ 0x0100:0x0120
             UInt8(codepoint - 0x0100)
@@ -111,7 +52,6 @@ function decode_unique_encoding(buffer, encoded)
             UInt8(codepoint)
         end for codepoint ∈ transcode(UInt32, encoded)
     ]
-
     bytes = vcat(buffer, bytes)
 
     # A token may contain only a part of UTF-8 sequence.
@@ -134,28 +74,83 @@ function decode_unique_encoding(buffer, encoded)
        bytes[end] ∈ 0x80:0xBF
         # Case C3
         decoded = bytes[1:(end-3)]
-        buffer = bytes[(end-2):end]
+        buffer[:] = bytes[(end-2):end]
     elseif length(bytes) ≥ 2 && bytes[end-1] ∈ 0xC0:0xEF && bytes[end] ∈ 0x80:0xBF
         # Case B2 and Case C2
         decoded = bytes[1:(end-2)]
-        buffer = bytes[(end-1):end]
+        buffer[:] = bytes[(end-1):end]
     elseif length(bytes) ≥ 1 && bytes[end] ∈ 0xC0:0xF7
         # Case A1, Case B1, and Case C1
         decoded = bytes[1:(end-1)]
-        buffer = bytes[end:end]
+        buffer[:] = bytes[end:end]
     else
         # No unfinished sequence at the end
         decoded = bytes
-        buffer = UInt8[]
+        empty!(buffer)
     end
 
     decoded = transcode(String, decoded)
-    decoded = string(
-        (
-            (valid ? char : '�') for
-            (char, valid) ∈ zip(decoded, isvalid.(collect(decoded)))
-        )...,
+    join(
+        (valid ? char : '�') for (char, valid) ∈ zip(decoded, isvalid.(collect(decoded)))
     )
+end
 
-    (buffer, decoded)
+# Tokenize `input` with the BPE algorithm.
+function tokenize(
+    token_to_id::Dict{String,Int},
+    ranks::Dict{Tuple{String,String},Int},
+    input::String,
+)::Array{Int}
+    # Split `input` by "\n" and " " and get `raw_tokens`.
+    # "\n" is a `raw_token` by itself.
+    # " " is attached to the next word.
+    raw_tokens = String[]
+    for (i_line, line) ∈ enumerate(split(input, "\n"))
+        if i_line ≥ 2
+            push!(raw_tokens, "\n")
+        end
+
+        for (i_word, word) ∈ enumerate(split(line, " "))
+            if i_word == 1 && word ≠ ""
+                push!(raw_tokens, word)
+            elseif i_word ≥ 2
+                push!(raw_tokens, " $word")
+            end
+        end
+    end
+    raw_tokens = encode_unique_encoding.(raw_tokens)
+
+    ids = Int[]  # Token IDs
+    for raw_token ∈ raw_tokens
+        if haskey(token_to_id, raw_token)
+            # `raw_token` is already a valid token.
+            push!(ids, token_to_id[raw_token])
+        else
+            # `raw_token` is not a valid token.
+            # Split `raw_token` and get valid tokens with the merge algorithm.
+            tokens = string.(collect(raw_token))
+            while length(tokens) ≥ 2
+                pairs = zip(tokens[1:(end-1)], tokens[2:end])
+                best_rank = typemax(Int)
+                best_i_pair = 0
+                for (i_pair, pair) ∈ enumerate(pairs)
+                    if haskey(ranks, pair) && ranks[pair] < best_rank
+                        best_rank = ranks[pair]
+                        best_i_pair = i_pair
+                    end
+                end
+                if best_i_pair == 0
+                    break
+                end
+
+                tokens[best_i_pair] *= tokens[best_i_pair+1]
+                deleteat!(tokens, best_i_pair + 1)
+            end
+
+            for token in tokens
+                push!(ids, token_to_id[token])
+            end
+        end
+    end
+    ids
 end
