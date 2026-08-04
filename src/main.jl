@@ -23,7 +23,7 @@ using SafeTensors
 include("tokenizer.jl")
 include("transformer.jl")
 
-function main()
+function main()::Nothing
     if length(ARGS) ≠ 2
         println("GPT-2 Inference with Julia")
         print("Usage: ")
@@ -35,7 +35,12 @@ function main()
 
     #### Loading Files ####
 
-    config = JSON.parsefile("$(ARGS[1])/config.json")
+    token_to_id, id_to_token = begin
+        vocab = JSON.parsefile("$(ARGS[1])/vocab.json")
+        token_to_id = Dict(token => id for (token, id) ∈ vocab)
+        id_to_token = Dict(id => token for (token, id) ∈ vocab)
+        token_to_id, id_to_token
+    end
 
     ranks = begin
         ranks = Dict{Tuple{String,String},Int}()
@@ -53,11 +58,10 @@ function main()
         ranks
     end
 
-    token_to_id, id_to_token = begin
-        vocab = JSON.parsefile("$(ARGS[1])/vocab.json")
-        token_to_id = Dict(token => id for (token, id) ∈ vocab)
-        id_to_token = Dict(id => token for (token, id) ∈ vocab)
-        token_to_id, id_to_token
+    model = begin
+        tensors = load_safetensors("$(ARGS[1])/model.safetensors")
+        config = JSON.parsefile("$(ARGS[1])/config.json")
+        get_model(tensors, config)
     end
 
     #### Tokenization ####
@@ -66,19 +70,14 @@ function main()
     if length(ids) == 0
         println("Your prompt should not be empty.")
         exit()
-    elseif length(ids) > config["n_ctx"]
+    elseif length(ids) > model.n_ctx
         println("Your prompt exceeds the context length. Try shorter prompt.")
         exit()
     end
 
-    #### Loading Tensors ####
-
-    tensors = load_safetensors("$(ARGS[1])/model.safetensors")
-
     #### Inference ####
 
-    model = get_model(tensors, config)
-
+    buffer = UInt8[]
     cached_k = [
         [Matrix{Float32}(undef, model.n_embd ÷ model.n_head, 0) for _ = 1:model.n_head]
         for _ = 1:model.n_layer
@@ -88,8 +87,7 @@ function main()
         for _ = 1:model.n_layer
     ]
 
-    buffer = UInt8[]
-    for (pos, id) in enumerate(ids[1:(end-1)])
+    for (pos, id) ∈ enumerate(ids[1:(end-1)])
         decoded = decode_unique_encoding!(buffer, id_to_token[id])
         printstyled(decoded, bold = true, color = :light_black)
         transform!(cached_k, cached_v, model, id, pos)
