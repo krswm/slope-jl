@@ -8,7 +8,7 @@ I also built [a Rust counterpart](https://github.com/krswm/slope-rs).
 
 ## Quickstart
 
-I made this project just for educational purpose. Use at your own risk.
+I made this project just for **educational purpose**. Use at your own risk.
 
 It is assumed that you have cURL, Git, and Julia installed on your machine.
 
@@ -67,7 +67,9 @@ I have verified that this program works with the following models.
 
 This is a hobby project of mine I started from scratch.
 
-I started this project on 2026-07-03 and finished my first implementation on 2026-07-20.
+- 2026-07-03: I started this project.
+- 2026-07-20: I finished implementing an GPT-2 inference engine in Julia.
+- 2026-08-04: I finished rewriting the transformer to use KV-cache.
 
-I used open source LLM inference engines (Ollama, etc.) and open source LLM models (TinyLlama, GPT-2, etc.) only for the purpose to observe their behavior as LLM architecture.
-Except for that, I did **not** use generative AI for this project at all.
+I used open source LLM inference engines (Ollama, etc.) and open weight LLM models (TinyLlama, GPT-2, etc.) only for the purpose to observe their behavior as LLM architecture.
+Except for this, I did **not** use generative AI for this project at all.

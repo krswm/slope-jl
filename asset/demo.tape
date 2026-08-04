@@ -2,6 +2,6 @@ Output asset/demo.gif
 
 Set FontFamily "Iosevka Fixed"
 
-Type "julia --project --handle-signals=no main.jl ../model 'Natural language processing is a branch of computer science. We study'"
+Type "julia --project src/main.jl ../model 'Natural language processing is a branch of computer science. We study'""
 Enter
-Sleep 15s
+Sleep 30s
