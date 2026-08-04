@@ -79,26 +79,26 @@ function main()
 
     model = get_model(tensors, config)
 
-    k_caches = [
-        [Array{Float32}(undef, model.head_size, 0) for _ = 1:model.n_head] for
-        _ = 1:config["n_layer"]
+    cached_k = [
+        [Matrix{Float32}(undef, model.n_embd ÷ model.n_head, 0) for _ = 1:model.n_head]
+        for _ = 1:model.n_layer
     ]
-    v_caches = [
-        [Array{Float32}(undef, model.head_size, 0) for _ = 1:model.n_head] for
-        _ = 1:config["n_layer"]
+    cached_v = [
+        [Matrix{Float32}(undef, model.n_embd ÷ model.n_head, 0) for _ = 1:model.n_head]
+        for _ = 1:model.n_layer
     ]
 
     buffer = UInt8[]
     for (pos, id) in enumerate(ids[1:(end-1)])
         decoded = decode_unique_encoding!(buffer, id_to_token[id])
         printstyled(decoded, bold = true, color = :light_black)
-        transform!(k_caches, v_caches, model, id, pos)
+        transform!(cached_k, cached_v, model, id, pos)
     end
     id = ids[end]
     decoded = decode_unique_encoding!(buffer, id_to_token[id])
     printstyled(decoded, bold = true, color = :light_black)
     for pos = (length(ids)+1):config["n_ctx"]
-        logits = transform!(k_caches, v_caches, model, id, pos)
+        logits = transform!(cached_k, cached_v, model, id, pos)
         id = argmax(logits) - 1
         decoded = decode_unique_encoding!(buffer, id_to_token[id])
         printstyled(decoded, bold = true)

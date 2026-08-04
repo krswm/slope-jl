@@ -15,18 +15,18 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 struct Layer
-    g1::Array{Float32,1}
-    t1::Array{Float32,1}
-    w11::Array{Float32,2}
-    b11::Array{Float32,1}
-    w12::Array{Float32,2}
-    b12::Array{Float32,1}
-    g2::Array{Float32,1}
-    t2::Array{Float32,1}
-    w21::Array{Float32,2}
-    b21::Array{Float32,1}
-    w22::Array{Float32,2}
-    b22::Array{Float32,1}
+    g1::Vector{Float32}
+    t1::Vector{Float32}
+    w11::Matrix{Float32}
+    b11::Vector{Float32}
+    w12::Matrix{Float32}
+    b12::Vector{Float32}
+    g2::Vector{Float32}
+    t2::Vector{Float32}
+    w21::Matrix{Float32}
+    b21::Vector{Float32}
+    w22::Matrix{Float32}
+    b22::Vector{Float32}
 end
 
 struct Model
@@ -35,23 +35,26 @@ struct Model
     n_head::Int
     n_layer::Int
     vocab_size::Int
-    head_size::Int
     e::Float32
-    wte::Array{Float32,2}
-    wpe::Array{Float32,2}
+    wte::Matrix{Float32}
+    wpe::Matrix{Float32}
     layers::Array{Layer}
-    gf::Array{Float32,1}
-    tf::Array{Float32,1}
+    gf::Vector{Float32}
+    tf::Vector{Float32}
 end
 
-function get_model(tensors, config)
+function get_model(tensors::Dict{String,Array}, config::JSON.Object)::Model
     n_ctx = config["n_ctx"]
     n_embd = config["n_embd"]
     n_head = config["n_head"]
     n_layer = config["n_layer"]
     vocab_size = config["vocab_size"]
-    head_size = n_embd ÷ n_head
     e = Float32(config["layer_norm_epsilon"])
+
+    # It feels more natural for me
+    # to perform "matrix * vector -> vector"
+    # than to perform "row vector * matrix -> row vector."
+    # Therefore, I apply `permutedims` to the all matrices.
 
     function validate_size(tensor, expected)
         if size(tensor) ≠ expected
@@ -113,54 +116,47 @@ function get_model(tensors, config)
     tf = tensors["ln_f.bias"]
     validate_size(tf, (n_embd,))
 
-    Model(
-        n_ctx,
-        n_embd,
-        n_head,
-        n_layer,
-        vocab_size,
-        head_size,
-        e,
-        wte,
-        wpe,
-        layers,
-        gf,
-        tf,
-    )
+    Model(n_ctx, n_embd, n_head, n_layer, vocab_size, e, wte, wpe, layers, gf, tf)
 end
 
 # The paper that introduced layer norm uses uncorrelated variance.
 # https://arxiv.org/abs/1607.06450
-layer_norm(x, g, t, e) = (x .- mean(x)) ./ √(var(x, corrected = false) + e) .* g .+ t
+layer_norm(x::Vector{Float32}, g::Vector{Float32}, t::Vector{Float32}, e::Float32) =
+    g .* (x .- mean(x)) ./ √(var(x, corrected = false) + e) + t
 
 # The transformer for the GPT-2 architecture.
-function transform!(k_caches, v_caches, model, id, pos)
+# This is the heard of this program.
+function transform!(
+    cached_k::Vector{Vector{Matrix{Float32}}},
+    cached_v::Vector{Vector{Matrix{Float32}}},
+    model::Model,
+    id::Int,
+    pos::Int,
+)::Vector{Float32}
     #### Embedding ####
 
     # ids are 0-based. Julia is 1-based.
     x = model.wte[:, id+1] + model.wpe[:, pos]
 
-    for (layer, k_cache, v_cache) ∈ zip(model.layers, k_caches, v_caches)
+    for (layer, k_matrices, v_matrices) ∈ zip(model.layers, cached_k, cached_v)
         #### Masked Multi-Head Attention ####
 
         y = layer_norm(x, layer.g1, layer.t1, model.e)
 
         y = layer.w11 * y + layer.b11
 
-        q_heads, k_heads, v_heads = (
-            Iterators.partition(chunk, model.head_size) for
+        q_vectors, k_vectors, v_vectors = (
+            Iterators.partition(chunk, model.n_embd ÷ model.n_head) for
             chunk ∈ Iterators.partition(y, model.n_embd)
         )
-
-        k_cache[:] = [hcat(cache, head) for (cache, head) in zip(k_cache, k_heads)]
-        v_cache[:] = [hcat(cache, head) for (cache, head) in zip(v_cache, v_heads)]
-
+        k_matrices[:] = hcat.(k_matrices, k_vectors)
+        v_matrices[:] = hcat.(v_matrices, v_vectors)
         y = (
             begin
-                z = k' * q ./ √Float32(model.head_size)
+                z = k' * q ./ √Float32(model.n_embd ÷ model.n_head)
                 z = exp.(z .- maximum(z))
                 v * z ./ sum(z)
-            end for (q, k, v) ∈ zip(q_heads, k_cache, v_cache)
+            end for (q, k, v) ∈ zip(q_vectors, k_matrices, v_matrices)
         )
         y = vcat(y...)
 
