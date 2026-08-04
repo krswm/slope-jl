@@ -119,13 +119,12 @@ function get_model(tensors::Dict{String,Array}, config::JSON.Object)::Model
     Model(n_ctx, n_embd, n_head, n_layer, vocab_size, e, wte, wpe, layers, gf, tf)
 end
 
-# The paper that introduced layer norm uses uncorrelated variance.
+# The paper that introduced layer norm uses uncorrected variance.
 # https://arxiv.org/abs/1607.06450
 layer_norm(x::Vector{Float32}, g::Vector{Float32}, t::Vector{Float32}, e::Float32) =
     g .* (x .- mean(x)) ./ √(var(x, corrected = false) + e) + t
 
-# The transformer for the GPT-2 architecture.
-# This is the heard of this program.
+# The transformer of the GPT-2 architecture, the heart of the inference engine.
 function transform!(
     cached_k::Vector{Vector{Matrix{Float32}}},
     cached_v::Vector{Vector{Matrix{Float32}}},
@@ -170,6 +169,8 @@ function transform!(
 
         y = layer.w21 * y + layer.b21
 
+        # This formula is based on the paper that introduced GELU.
+        # https://arxiv.org/abs/1606.08415
         y = (tanh.((y .^ 3 * 0.044715f0 + y) * √(2.0f0 / π)) .+ 1.0f0) .* y * 0.5f0
 
         y = layer.w22 * y + layer.b22

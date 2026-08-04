@@ -90,9 +90,7 @@ function decode_unique_encoding!(buffer::Array{UInt8}, encoded::String)::String
     end
 
     decoded = transcode(String, decoded)
-    join(
-        (valid ? char : '�') for (char, valid) ∈ zip(decoded, isvalid.(collect(decoded)))
-    )
+    join((valid ? char : '�') for (char, valid) ∈ zip(decoded, isvalid.(collect(decoded))))
 end
 
 # Tokenize `input` with the BPE algorithm.
@@ -147,7 +145,7 @@ function tokenize(
                 deleteat!(tokens, best_i_pair + 1)
             end
 
-            for token in tokens
+            for token ∈ tokens
                 push!(ids, token_to_id[token])
             end
         end

@@ -108,16 +108,16 @@ function main()::Nothing
     process_time = end_time - begin_time
     sec = process_time * 1e-9
     println()
-    printstyled("Transformer called $(model.n_ctx) times", color = :light_black)
+    printstyled("Transformer processed $(model.n_ctx) tokens", color = :light_black)
     println()
     printstyled(
-        "$(length(ids)) tokens prompted | ",
-        "$(model.n_ctx - length(ids) + 1) tokens generated",  # There is an extra token.
+        (@sprintf "Took %.3f s | %.3f tokens/s" sec (model.n_ctx / sec)),
         color = :light_black,
     )
     println()
     printstyled(
-        (@sprintf "Took %.3f s | %.3f tokens/s" sec (model.n_ctx / sec)),
+        "$(length(ids)) tokens prompted | ",
+        "$(model.n_ctx - length(ids) + 1) tokens generated",  # There is an extra token.
         color = :light_black,
     )
     println()
