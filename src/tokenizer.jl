@@ -53,6 +53,7 @@ function decode_unique_encoding!(buffer::Array{UInt8}, encoded::String)::String
         end for codepoint ∈ transcode(UInt32, encoded)
     ]
     bytes = vcat(buffer, bytes)
+    empty!(buffer)
 
     # A token may contain only a part of UTF-8 sequence.
     # Decode it incrementally.
@@ -74,19 +75,18 @@ function decode_unique_encoding!(buffer::Array{UInt8}, encoded::String)::String
        bytes[end] ∈ 0x80:0xBF
         # Case C3
         decoded = bytes[1:(end-3)]
-        buffer[:] = bytes[(end-2):end]
+        append!(buffer, bytes[(end-2):end])
     elseif length(bytes) ≥ 2 && bytes[end-1] ∈ 0xC0:0xEF && bytes[end] ∈ 0x80:0xBF
         # Case B2 and Case C2
         decoded = bytes[1:(end-2)]
-        buffer[:] = bytes[(end-1):end]
+        append!(buffer, bytes[(end-1):end])
     elseif length(bytes) ≥ 1 && bytes[end] ∈ 0xC0:0xF7
         # Case A1, Case B1, and Case C1
         decoded = bytes[1:(end-1)]
-        buffer[:] = bytes[end:end]
+        append!(buffer, bytes[end:end])
     else
         # No unfinished sequence at the end
         decoded = bytes
-        empty!(buffer)
     end
 
     decoded = transcode(String, decoded)
