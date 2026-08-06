@@ -124,6 +124,8 @@ end
 layer_norm(x::Vector{Float32}, g::Vector{Float32}, t::Vector{Float32}, e::Float32) =
     g .* (x .- mean(x)) ./ √(var(x, corrected = false) + e) + t
 
+mshow(x) = show(IOContext(stdout, :limit => true), "text/plain", x)
+
 # The transformer of the GPT-2 architecture, the heart of the inference engine.
 function transform!(
     cached_k::Vector{Vector{Matrix{Float32}}},
@@ -150,6 +152,7 @@ function transform!(
         )
         k_matrices[:] = hcat.(k_matrices, k_vectors)
         v_matrices[:] = hcat.(v_matrices, v_vectors)
+        #=
         y = (
             begin
                 z = k' * q ./ √Float32(model.n_embd ÷ model.n_head)
@@ -157,7 +160,14 @@ function transform!(
                 v * z ./ sum(z)
             end for (q, k, v) ∈ zip(q_vectors, k_matrices, v_matrices)
         )
-        y = vcat(y...)
+        =#
+        vectors = (
+            k' * q ./ √Float32(model.n_embd ÷ model.n_head) for
+            (k, q) ∈ zip(k_matrices, q_vectors)
+        )
+        vectors = (exp.(y .- maximum(y)) for y ∈ vectors)
+        vectors = (v * y ./ sum(y) for (v, y) ∈ zip(v_matrices, vectors))
+        y = vcat(vectors...)
 
         y = layer.w12 * y + layer.b12
 
