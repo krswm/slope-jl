@@ -119,12 +119,22 @@ function get_model(tensors::Dict{String,Array}, config::JSON.Object)::Model
     Model(n_ctx, n_embd, n_head, n_layer, vocab_size, e, wte, wpe, layers, gf, tf)
 end
 
+# Numerically stable than naive exp(x) / sum(x).
+function softmax(x::Vector{Float32})::Vector{Float32}
+    x = exp.(x .- maximum(x))
+    x / sum(x)
+end
+
 # The paper that introduced layer norm uses uncorrected variance.
 # https://arxiv.org/abs/1607.06450
-layer_norm(x::Vector{Float32}, g::Vector{Float32}, t::Vector{Float32}, e::Float32) =
+function layernorm(
+    x::Vector{Float32},
+    g::Vector{Float32},
+    t::Vector{Float32},
+    e::Float32,
+)::Vector{Float32}
     g .* (x .- mean(x)) ./ √(var(x, corrected = false) + e) + t
-
-mshow(x) = show(IOContext(stdout, :limit => true), "text/plain", x)
+end
 
 # The transformer of the GPT-2 architecture, the heart of the inference engine.
 function transform!(
@@ -142,53 +152,22 @@ function transform!(
     for (layer, k_matrices, v_matrices) ∈ zip(model.layers, cached_k, cached_v)
         #### Masked Multi-Head Attention ####
 
-        y = layer_norm(x, layer.g1, layer.t1, model.e)
+        y = layernorm(x, layer.g1, layer.t1, model.e)
 
         y = layer.w11 * y + layer.b11
 
-        q_vectors, k_vectors, v_vectors = (
-            Iterators.partition(chunk, model.n_embd ÷ model.n_head) for
-            chunk ∈ Iterators.partition(y, model.n_embd)
+        q_vectors, k_vectors, v_vectors = Iterators.partition.(
+            Iterators.partition(y, model.n_embd),
+            model.n_embd ÷ model.n_head,
         )
         k_matrices[:] = hcat.(k_matrices, k_vectors)
         v_matrices[:] = hcat.(v_matrices, v_vectors)
-        #=
-        y = (
-            begin
-                z = k' * q ./ √Float32(model.n_embd ÷ model.n_head)
-                z = exp.(z .- maximum(z))
-                v * z ./ sum(z)
-            end for (q, k, v) ∈ zip(q_vectors, k_matrices, v_matrices)
-        )
-        =#
-        #=
-        vectors = [
-            k' * q ./ √Float32(model.n_embd ÷ model.n_head) for
-            (k, q) ∈ zip(k_matrices, q_vectors)
-        ]
-        =#
-        # No k_matrices.' ?
-        vectors = transpose.(k_matrices) .* q_vectors ./ √Float32(model.n_embd ÷ model.n_head)
-            
-        # vectors = [exp.(y .- maximum(y)) for y ∈ vectors]
-
-        # vectors = exp.(vectors .- maximum.(vectors))
-
-        # vectors = exp.(vectors .- maximum(vectors))
-
-        # numerically stable softmax!
-        softmax(vec) = begin
-            tmp = exp.(vec .- maximum(vec))
-            tmp / sum(tmp)
-        end
-
-        vectors = softmax.(vectors)
-        
-        # vectors = [v * y ./ sum(y) for (v, y) ∈ zip(v_matrices, vectors)]
-
-        # vectors |> println
-        vectors = v_matrices .* vectors
-        y = vcat(vectors...)
+        attention =
+            v_matrices .* softmax.(
+                transpose.(k_matrices) .* q_vectors ./
+                √Float32(model.n_embd ÷ model.n_head),
+            )
+        y = vcat(attention...)
 
         y = layer.w12 * y + layer.b12
 
@@ -196,7 +175,7 @@ function transform!(
 
         #### Feed Forward ####
 
-        y = layer_norm(x, layer.g2, layer.t2, model.e)
+        y = layernorm(x, layer.g2, layer.t2, model.e)
 
         y = layer.w21 * y + layer.b21
 
@@ -211,7 +190,7 @@ function transform!(
 
     #### Projection ####
 
-    x = layer_norm(x, model.gf, model.tf, model.e)
+    x = layernorm(x, model.gf, model.tf, model.e)
 
-    model.wte' * x
+    transpose(model.wte) * x
 end
