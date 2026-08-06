@@ -16,6 +16,7 @@
 
 using LinearAlgebra
 using Printf
+using Random
 using Statistics
 
 using JSON
@@ -99,7 +100,28 @@ function main()::Nothing
     printstyled(decoded, bold = true, color = :light_black)
     for pos = length(ids):config["n_ctx"]
         logits = transform!(cached_k, cached_v, model, id, pos)
-        id = argmax(logits) - 1
+
+        # Temperature! Physics! Statistical mechanics <3
+        function tempsoftmax(x, T)
+            x = exp.((x .- maximum(x)) ./ T)
+            x / sum(x)
+        end
+        
+        logits = tempsoftmax(logits, 10.0f0)
+
+        @assert sum(logits) ≈ 1.0f0
+
+        random = rand(Float32)
+        sum_prob = 0.0f0
+        for (i, prob) ∈ enumerate(logits)
+            sum_prob += prob
+            if random < sum_prob
+                id = i - 1
+                break
+            end
+        end
+
+           
         decoded = decode_unique_encoding!(buffer, id_to_token[id])
         printstyled(decoded, bold = true)
     end
