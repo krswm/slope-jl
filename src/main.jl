@@ -26,10 +26,13 @@ include("tokenizer.jl")
 include("transformer.jl")
 
 function main()::Nothing
-    if length(ARGS) ≠ 2
+    if length(ARGS) ≠ 3
         println("GPT-2 Inference with Julia")
         print("Usage: ")
-        printstyled("julia main.jl <path to model repository> <your prompt>", bold = true)
+        printstyled(
+            "julia main.jl <path to model repository> <sampling temperature> <your prompt>",
+            bold = true,
+        )
         println()
         println("You may have to enclose 'your prompt' with quotes.")
         exit()
@@ -66,9 +69,17 @@ function main()::Nothing
         get_model(tensors, config)
     end
 
+    #### Temperature ####
+
+    temp = parse(Float32, ARGS[2])
+    if temp < 0.0f0
+        println("Temperature must be ≥ 0.0.")
+        exit()
+    end
+
     #### Tokenization ####
 
-    ids = tokenize(token_to_id, ranks, ARGS[2])
+    ids = tokenize(token_to_id, ranks, ARGS[3])
     if length(ids) == 0
         println("Your prompt should not be empty.")
         exit()
@@ -100,28 +111,23 @@ function main()::Nothing
     printstyled(decoded, bold = true, color = :light_black)
     for pos = length(ids):config["n_ctx"]
         logits = transform!(cached_k, cached_v, model, id, pos)
-
-        # Temperature! Physics! Statistical mechanics <3
-        function tempsoftmax(x, T)
-            x = exp.((x .- maximum(x)) ./ T)
-            x / sum(x)
-        end
-        
-        logits = tempsoftmax(logits, 10.0f0)
-
-        @assert sum(logits) ≈ 1.0f0
-
-        random = rand(Float32)
-        sum_prob = 0.0f0
-        for (i, prob) ∈ enumerate(logits)
-            sum_prob += prob
-            if random < sum_prob
-                id = i - 1
-                break
+        if temp == 0.0
+            # id is 1-based. Julia is 0-based.
+            id = argmax(logits) - 1
+        else
+            logits = exp.((logits .- maximum(logits)) ./ temp)
+            logits = logits / sum(logits)
+            rand_prob = rand(Float32)
+            total_prob = 0.0f0
+            for (i, prob) ∈ enumerate(logits)
+                total_prob += prob
+                if rand_prob < total_prob
+                    # id is 1-based. Julia is 0-based.
+                    id = i - 1
+                    break
+                end
             end
         end
-
-           
         decoded = decode_unique_encoding!(buffer, id_to_token[id])
         printstyled(decoded, bold = true)
     end
