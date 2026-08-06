@@ -161,12 +161,33 @@ function transform!(
             end for (q, k, v) ∈ zip(q_vectors, k_matrices, v_matrices)
         )
         =#
-        vectors = (
+        #=
+        vectors = [
             k' * q ./ √Float32(model.n_embd ÷ model.n_head) for
             (k, q) ∈ zip(k_matrices, q_vectors)
-        )
-        vectors = (exp.(y .- maximum(y)) for y ∈ vectors)
-        vectors = (v * y ./ sum(y) for (v, y) ∈ zip(v_matrices, vectors))
+        ]
+        =#
+        # No k_matrices.' ?
+        vectors = transpose.(k_matrices) .* q_vectors ./ √Float32(model.n_embd ÷ model.n_head)
+            
+        # vectors = [exp.(y .- maximum(y)) for y ∈ vectors]
+
+        # vectors = exp.(vectors .- maximum.(vectors))
+
+        # vectors = exp.(vectors .- maximum(vectors))
+
+        # numerically stable softmax!
+        softmax(vec) = begin
+            tmp = exp.(vec .- maximum(vec))
+            tmp / sum(tmp)
+        end
+
+        vectors = softmax.(vectors)
+        
+        # vectors = [v * y ./ sum(y) for (v, y) ∈ zip(v_matrices, vectors)]
+
+        # vectors |> println
+        vectors = v_matrices .* vectors
         y = vcat(vectors...)
 
         y = layer.w12 * y + layer.b12
