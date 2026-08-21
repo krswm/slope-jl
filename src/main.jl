@@ -14,16 +14,18 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using LinearAlgebra
 using Printf
 using Random
-using Statistics
 
 using JSON
 using SafeTensors
 
+include("model.jl")
+using .Model
 include("tokenizer.jl")
+using .Tokenizer
 include("transformer.jl")
+using .Transformer
 
 function main()::Nothing
     if length(ARGS) ≠ 3
@@ -100,7 +102,6 @@ function main()::Nothing
         for _ = 1:model.n_layer
     ]
 
-    begin_time = time_ns()
     for (pos, id) ∈ enumerate(ids[1:(end-1)])
         decoded = decode_unique_encoding!(buffer, id_to_token[id])
         printstyled(decoded, bold = true, color = :light_black)
@@ -131,23 +132,6 @@ function main()::Nothing
         decoded = decode_unique_encoding!(buffer, id_to_token[id])
         printstyled(decoded, bold = true)
     end
-    end_time = time_ns()
-
-    process_time = end_time - begin_time
-    sec = process_time * 1e-9
-    println()
-    printstyled("Transformer processed $(model.n_ctx) tokens", color = :light_black)
-    println()
-    printstyled(
-        (@sprintf "Took %.3f s | %.3f tokens/s" sec (model.n_ctx / sec)),
-        color = :light_black,
-    )
-    println()
-    printstyled(
-        "$(length(ids)) tokens prompted | ",
-        "$(model.n_ctx - length(ids) + 1) tokens generated",  # There is an extra token.
-        color = :light_black,
-    )
     println()
 end
 

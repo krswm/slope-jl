@@ -14,6 +14,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+module Tokenizer
+
+export decode_unique_encoding!, tokenize
+
 # GPT-2 has a unique encoding.
 # e.g.: 'Ġ' (U+0120) → 0x20
 
@@ -151,4 +155,6 @@ function tokenize(
         end
     end
     ids
+end
+
 end
