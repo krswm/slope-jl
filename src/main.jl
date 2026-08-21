@@ -32,7 +32,7 @@ function main()::Nothing
         println("GPT-2 Inference with Julia")
         print("Usage: ")
         printstyled(
-            "julia main.jl <path to model repository> <sampling temperature> <your prompt>",
+            "julia --project $PROGRAM_FILE <path to model repository> <sampling temperature> <your prompt>",
             bold = true,
         )
         println()
@@ -73,8 +73,8 @@ function main()::Nothing
 
     #### Temperature ####
 
-    temp = parse(Float32, ARGS[2])
-    if temp < 0.0f0
+    temperature = parse(Float32, ARGS[2])
+    if temperature < 0.0f0
         println("Temperature must be ≥ 0.0.")
         exit()
     end
@@ -92,46 +92,75 @@ function main()::Nothing
 
     #### Inference ####
 
-    buffer = UInt8[]
-    cached_k = [
+    num_prompted_tokens = 0
+    num_processed_tokens = 0
+    num_generated_tokens = 0
+    id = 0
+    utf8_buffer = UInt8[]
+    k_caches = [
         [Matrix{Float32}(undef, model.n_embd ÷ model.n_head, 0) for _ = 1:model.n_head]
         for _ = 1:model.n_layer
     ]
-    cached_v = [
+    v_caches = [
         [Matrix{Float32}(undef, model.n_embd ÷ model.n_head, 0) for _ = 1:model.n_head]
         for _ = 1:model.n_layer
     ]
 
-    for (pos, id) ∈ enumerate(ids[1:(end-1)])
-        decoded = decode_unique_encoding!(buffer, id_to_token[id])
-        printstyled(decoded, bold = true, color = :light_black)
-        transform!(cached_k, cached_v, model, id, pos)
-    end
-    id = ids[end]
-    decoded = decode_unique_encoding!(buffer, id_to_token[id])
-    printstyled(decoded, bold = true, color = :light_black)
-    for pos = length(ids):config["n_ctx"]
-        logits = transform!(cached_k, cached_v, model, id, pos)
-        if temp == 0.0
-            # id is 1-based. Julia is 0-based.
-            id = argmax(logits) - 1
-        else
-            logits = exp.((logits .- maximum(logits)) ./ temp)
-            logits = logits / sum(logits)
-            rand_prob = rand(Float32)
-            total_prob = 0.0f0
-            for (i, prob) ∈ enumerate(logits)
-                total_prob += prob
-                if rand_prob < total_prob
-                    # id is 1-based. Julia is 0-based.
-                    id = i - 1
-                    break
+    performance_timer = time_ns()
+    for pos = 1:model.n_ctx
+        if pos ≤ length(ids)
+            id = ids[pos]
+            decoded = decode_unique_encoding!(utf8_buffer, id_to_token[id])
+            printstyled(decoded, bold = true, color = :light_black)
+            num_prompted_tokens += 1
+        end
+
+        logits = transform!(k_caches, v_caches, model, id, pos)
+        num_processed_tokens += 1
+
+        if pos ≥ length(ids)
+            if temperature == 0.0f32
+                # id is 1-based. Julia is 0-based.
+                id = argmax(logits) - 1
+            else
+                x = exp.((logits .- maximum(logits)) ./ temperature)
+                x = x / sum(x)
+                rand_prob = rand(Float32)
+                total_prob = 0.0f0
+                for (i, prob) ∈ enumerate(x)
+                    total_prob += prob
+                    if rand_prob < total_prob
+                        # id is 1-based. Julia is 0-based.
+                        id = i - 1
+                        break
+                    end
                 end
             end
+            decoded = decode_unique_encoding!(utf8_buffer, id_to_token[id])
+            printstyled(decoded, bold = true)
+            num_generated_tokens += 1
         end
-        decoded = decode_unique_encoding!(buffer, id_to_token[id])
-        printstyled(decoded, bold = true)
     end
+    println()
+    performance_time = (time_ns() - performance_timer) * 1e-9
+
+    printstyled("Took $(@sprintf "%.3f" performance_time) s", color = :light_black)
+    println()
+    printstyled(
+        "$num_prompted_tokens $(num_prompted_tokens == 1 ? "token" : "tokens") prompted",
+        color = :light_black,
+    )
+    println()
+    printstyled(
+        "$num_processed_tokens $(num_processed_tokens == 1 ? "token" : "tokens") processed by the transformer ",
+        "($(@sprintf "%.3f" (num_processed_tokens / performance_time)) tok/s)",
+        color = :light_black,
+    )
+    println()
+    printstyled(
+        "$num_generated_tokens $(num_generated_tokens == 1 ? "token" : "tokens") generated",
+        color = :light_black,
+    )
     println()
 end
 
