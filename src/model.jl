@@ -61,7 +61,6 @@ function get_model(tensors::Dict{String,Array}, config::JSON.Object)::Model
     n_head = config["n_head"]
     n_layer = config["n_layer"]
     vocab_size = config["vocab_size"]
-
     e = Float32(config["layer_norm_epsilon"])
 
     # Regarding a product between a matrix and a vector,

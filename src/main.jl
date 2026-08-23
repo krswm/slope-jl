@@ -40,8 +40,6 @@ function main()::Nothing
         exit()
     end
 
-    #### Loading Files ####
-
     token_to_id, id_to_token = begin
         vocab = JSON.parsefile("$(ARGS[1])/vocab.json")
         token_to_id = Dict(token => id for (token, id) ∈ vocab)
@@ -71,16 +69,15 @@ function main()::Nothing
         get_model(tensors, config)
     end
 
-    #### Temperature ####
-
     temperature = parse(Float32, ARGS[2])
     if temperature < 0.0f0
         println("Temperature must be ≥ 0.0.")
         exit()
     end
 
-    #### Tokenization ####
+    # ==== Tokenization ====
 
+    # Token IDs
     ids = tokenize(token_to_id, ranks, ARGS[3])
     if length(ids) == 0
         println("Your prompt should not be empty.")
@@ -90,7 +87,7 @@ function main()::Nothing
         exit()
     end
 
-    #### Inference ####
+    # ==== Inference ====
 
     num_prompted_tokens = 0
     num_processed_tokens = 0
@@ -110,12 +107,12 @@ function main()::Nothing
     for pos = 1:model.n_ctx
         if pos ≤ length(ids)
             id = ids[pos]
-            decoded = decode_unique_encoding!(utf8_buffer, id_to_token[id])
+            decoded = decode_unique_encoding!(id_to_token[id], utf8_buffer)
             printstyled(decoded, bold = true, color = :light_black)
             num_prompted_tokens += 1
         end
 
-        logits = transform!(k_caches, v_caches, model, id, pos)
+        logits = transformer!(id, pos, model, k_caches, v_caches)
         num_processed_tokens += 1
 
         if pos ≥ length(ids)
@@ -123,7 +120,8 @@ function main()::Nothing
                 # id is 1-based. Julia is 0-based.
                 id = argmax(logits) - 1
             else
-                x = exp.((logits .- maximum(logits)) ./ temperature)
+                x = logits ./ temperature
+                x = exp.(x .- maximum(x))
                 x = x / sum(x)
                 rand_prob = rand(Float32)
                 total_prob = 0.0f0
@@ -136,7 +134,7 @@ function main()::Nothing
                     end
                 end
             end
-            decoded = decode_unique_encoding!(utf8_buffer, id_to_token[id])
+            decoded = decode_unique_encoding!(id_to_token[id], utf8_buffer)
             printstyled(decoded, bold = true)
             num_generated_tokens += 1
         end

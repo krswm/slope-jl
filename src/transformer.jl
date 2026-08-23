@@ -16,7 +16,7 @@
 
 module Transformer
 
-export transform!
+export transformer!
 
 using Statistics
 
@@ -48,12 +48,13 @@ function multi_head_attention!(
     model::Model,
 )::Vector{Float32}
     x = layer.w11 * x + layer.b11
-    q, k_new, v_new = Iterators.partition.(
+    chunks = Iterators.partition.(
         Iterators.partition(x, model.n_embd),
         model.n_embd ÷ model.n_head,
     )
-    k[:] = hcat.(k, k_new)
-    v[:] = hcat.(v, v_new)
+    q = popfirst!(chunks)
+    k[:] = hcat.(k, popfirst!(chunks))
+    v[:] = hcat.(v, popfirst!(chunks))
     # Scaled dot-product attention
     a = v .* softmax.(transpose.(k) .* q ./ √Float32(model.n_embd ÷ model.n_head))
     x = vcat(a...)
@@ -71,12 +72,12 @@ function feed_forward(x::Vector{Float32}, layer::Layer, model::Model)::Vector{Fl
 end
 
 # The transformer of the GPT-2 architecture.
-function transform!(
-    k_caches::Vector{Vector{Matrix{Float32}}},
-    v_caches::Vector{Vector{Matrix{Float32}}},
-    model::Model,
+function transformer!(
     id::Int,
     pos::Int,
+    model::Model,
+    k_caches::Vector{Vector{Matrix{Float32}}},
+    v_caches::Vector{Vector{Matrix{Float32}}},
 )::Vector{Float32}
     # ids are 0-based. Julia is 1-based.
     x = model.wte[:, id+1] + model.wpe[:, pos]

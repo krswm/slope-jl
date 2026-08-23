@@ -40,7 +40,7 @@ function encode_unique_encoding(text::String)::String
     transcode(String, encoded)
 end
 
-function decode_unique_encoding!(buffer::Array{UInt8}, encoded::String)::String
+function decode_unique_encoding!(encoded::String, buffer::Array{UInt8})::String
     bytes = [
         if codepoint ∈ 0x0100:0x0120
             UInt8(codepoint - 0x0100)
@@ -134,14 +134,14 @@ function tokenize(
             while length(tokens) ≥ 2
                 pairs = zip(tokens[1:(end-1)], tokens[2:end])
                 best_rank = typemax(Int)
-                best_i_pair = 0
+                best_i_pair = typemax(Int)
                 for (i_pair, pair) ∈ enumerate(pairs)
                     if haskey(ranks, pair) && ranks[pair] < best_rank
                         best_rank = ranks[pair]
                         best_i_pair = i_pair
                     end
                 end
-                if best_i_pair == 0
+                if best_i_pair == typemax(Int)
                     break
                 end
 
