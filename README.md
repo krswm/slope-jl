@@ -2,7 +2,7 @@
 
 I built a GPT-2 inference engine from scratch in Julia.
 
-![Demo](asset/demo.gif)
+![(Cherrypicked) demo: Hallucination?](asset/demo.gif)
 
 I also built [a Rust counterpart](https://github.com/krswm/slope-rs).
 
@@ -35,8 +35,12 @@ julia --project --eval 'using Pkg; Pkg.instantiate()'
 The GPT-2 model is not for chat conversation, but for text continuation.
 
 ```
-julia --project src/main.jl ../model 'Natural language processing is a branch of computer science. We study'
+julia --project src/main.jl ../model 0.75 'Julia is a programming language. It is fun to code in Julia.'
 ```
+
+The second parameter (`0.75` here) is sampling temperature, which controls the randomness of the generated text.
+Set it to `0.0` to make the generated text deterministic.
+Increase it to make the generated text more *creative*.
 
 ## Supported Models
 
