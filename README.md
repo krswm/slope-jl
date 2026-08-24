@@ -60,6 +60,13 @@ I have verified that this program works with the following models.
 - [GPT-2 Large](https://huggingface.co/openai-community/gpt2-large)
 - [GPT-2 XL](https://huggingface.co/openai-community/gpt2-xl)
 
+## Source Files
+
+- [`src/model.jl`](src/model.jl) builds a `struct` holding the parameters of the model.
+- [`src/tokenizer.jl`](src/tokenizer.jl) converts your prompt into numbers that the model understands (tokens) with the BPE algorithm.
+- [`src/transformer.jl`](src/transformer.jl) is the heart of the GPT-2 inferenece. It receives tokens (your prompt + already generated text) and predicts the next token.
+- [`src/main.jl`](src/main.jl) loads files from the GPT-2 repository and generates text.
+
 ## Credits
 
 - [GPT-2](https://huggingface.co/openai-community/gpt2) for devising an influental LLM architecture.
