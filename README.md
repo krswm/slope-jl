@@ -2,9 +2,13 @@
 
 I built a GPT-2 inference engine from scratch in Julia.
 
-![(Cherrypicked) demo: Hallucination?](asset/demo.gif)
+![(Cherrypicked) demo](https://raw.githubusercontent.com/krswm/asset/main/slope-jl/demo.gif)
 
-I also built [a Rust counterpart](https://github.com/krswm/slope-rs).
+I also built:
+
+- [An inference engine for GPT-2 in Rust](https://github.com/krswm/slope-rs)
+- [An inference engine for Stable Diffusion in Julia](https://github.com/krswm/diff-jl)
+- [An inference engine for Stable Diffusion in Rust](https://github.com/krswm/diff-rs)
 
 ## Quickstart
 
